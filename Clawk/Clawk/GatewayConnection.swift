@@ -76,7 +76,7 @@ class GatewayConnection: NSObject, ObservableObject {
     init(host: String? = nil, port: Int? = nil, token: String? = nil) {
         self.gatewayHost = host ?? UserDefaults.standard.string(forKey: "gatewayHost") ?? "100.96.61.83"
         self.gatewayPort = port ?? UserDefaults.standard.integer(forKey: "gatewayPort").nonZero ?? 18789
-        self.gatewayToken = token ?? UserDefaults.standard.string(forKey: "gatewayToken") ?? ""
+        self.gatewayToken = token ?? UserDefaults.standard.string(forKey: "gatewayToken") ?? "b3b6e49d493b3f0f8443575ebfd9fb1caaf103a5e333d106"
         self.deviceToken = UserDefaults.standard.string(forKey: "gatewayDeviceToken") ?? UUID().uuidString
         super.init()
 
