@@ -73,22 +73,25 @@ class GatewayConnection: NSObject, ObservableObject {
 
     // MARK: - Initialization
 
+    // The canonical gateway token — always use this, never trust cached values
+    static let defaultToken = "b3b6e49d493b3f0f8443575ebfd9fb1caaf103a5e333d106"
+
     init(host: String? = nil, port: Int? = nil, token: String? = nil) {
-        // Migrate stale cached values (localhost/127.0.0.1 don't work on physical devices)
+        // Migrate ALL stale cached values (host, port, AND token)
         let cachedHost = UserDefaults.standard.string(forKey: "gatewayHost")
-        if cachedHost == "127.0.0.1" || cachedHost == "localhost" {
+        if cachedHost == "127.0.0.1" || cachedHost == "localhost" || cachedHost?.hasPrefix("wss://") == true {
             UserDefaults.standard.removeObject(forKey: "gatewayHost")
             UserDefaults.standard.removeObject(forKey: "gatewayPort")
         }
-        let cachedPort = UserDefaults.standard.integer(forKey: "gatewayPort")
-        if cachedPort == 18789 {
-            // Old port before proxy — clear it
-            UserDefaults.standard.removeObject(forKey: "gatewayPort")
+        // Always clear stale tokens — the hardcoded default is the source of truth
+        let cachedToken = UserDefaults.standard.string(forKey: "gatewayToken")
+        if cachedToken != nil && cachedToken != Self.defaultToken {
+            UserDefaults.standard.removeObject(forKey: "gatewayToken")
         }
 
         self.gatewayHost = host ?? UserDefaults.standard.string(forKey: "gatewayHost") ?? "100.96.61.83"
         self.gatewayPort = port ?? UserDefaults.standard.integer(forKey: "gatewayPort").nonZero ?? 18790
-        self.gatewayToken = token ?? UserDefaults.standard.string(forKey: "gatewayToken") ?? "b3b6e49d493b3f0f8443575ebfd9fb1caaf103a5e333d106"
+        self.gatewayToken = token ?? UserDefaults.standard.string(forKey: "gatewayToken") ?? Self.defaultToken
         self.deviceToken = UserDefaults.standard.string(forKey: "gatewayDeviceToken") ?? UUID().uuidString
         super.init()
 
@@ -114,14 +117,24 @@ class GatewayConnection: NSObject, ObservableObject {
     // MARK: - Connection Management
 
     func connect() {
-        guard !isConnecting && !isConnected else { return }
+        guard !isConnecting && !isConnected else {
+            debugAppend("Connect skipped: isConnecting=\(isConnecting), isConnected=\(isConnected)")
+            return
+        }
 
         DispatchQueue.main.async {
             self.isConnecting = true
             self.connectionError = nil
         }
 
-        let urlString = "ws://\(gatewayHost):\(gatewayPort)"
+        // Support full URL (wss://...) or construct from host:port
+        let urlString: String
+        if gatewayHost.hasPrefix("wss://") || gatewayHost.hasPrefix("ws://") {
+            urlString = gatewayHost
+        } else {
+            urlString = "ws://\(gatewayHost):\(gatewayPort)"
+        }
+        debugAppend("Connecting to \(urlString)...")
         guard let url = URL(string: urlString) else {
             DispatchQueue.main.async {
                 self.connectionError = "Invalid gateway URL"
@@ -131,14 +144,15 @@ class GatewayConnection: NSObject, ObservableObject {
         }
 
         var request = URLRequest(url: url)
-        request.timeoutInterval = 10
+        request.timeoutInterval = 15
 
         let config = URLSessionConfiguration.default
+        config.waitsForConnectivity = false  // Don't wait — fail fast so we can show error
+        // Don't set httpAdditionalHeaders — URLSessionWebSocketTask handles upgrade internally
         urlSession = URLSession(configuration: config, delegate: self, delegateQueue: nil)
         webSocketTask = urlSession?.webSocketTask(with: request)
         webSocketTask?.resume()
-
-        receiveMessage()
+        // Receive starts in didOpenWithProtocol delegate — not before socket is open
     }
 
     func disconnect() {
@@ -179,8 +193,10 @@ class GatewayConnection: NSObject, ObservableObject {
 
     private func reconnect() {
         disconnect()
-        reconnectTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { [weak self] _ in
-            self?.connect()
+        DispatchQueue.main.async { [weak self] in
+            self?.reconnectTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { [weak self] _ in
+                self?.connect()
+            }
         }
     }
 
@@ -1240,25 +1256,43 @@ class GatewayConnection: NSObject, ObservableObject {
 
 extension GatewayConnection: URLSessionWebSocketDelegate {
     func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
-        NSLog("[Gateway] WebSocket opened")
+        debugAppend("WebSocket opened successfully")
         connectNonce = nil
         connectSent = false
 
         DispatchQueue.main.async {
             self.isConnecting = true
+            self.connectionError = nil  // Clear any previous error on successful open
         }
+        // Start receiving messages
+        receiveMessage()
         // Queue connect with short delay to allow connect.challenge event to arrive first
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
             self?.performHandshake()
         }
     }
 
+    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
+        // Accept Tailscale serve certificates
+        debugAppend("TLS challenge: \(challenge.protectionSpace.authenticationMethod)")
+        completionHandler(.performDefaultHandling, nil)
+    }
+
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        let errorDesc: String
+        if let error = error {
+            let nsError = error as NSError
+            errorDesc = "\(nsError.localizedDescription) (code: \(nsError.code), domain: \(nsError.domain))"
+            debugAppend("Connection error: \(errorDesc)")
+        } else {
+            errorDesc = "Connection closed"
+            debugAppend("Connection closed normally")
+        }
         DispatchQueue.main.async {
             self.isConnected = false
             self.isConnecting = false
             if let error = error {
-                self.connectionError = error.localizedDescription
+                self.connectionError = errorDesc
             }
         }
         reconnect()

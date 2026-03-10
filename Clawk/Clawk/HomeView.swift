@@ -94,9 +94,10 @@ struct HomeView: View {
                         Text(gateway.isConnecting ? "Connecting..." : (gateway.isConnected ? "Connected" : "Tap to reconnect"))
                             .font(.headline)
                             .foregroundColor(.primary)
-                        Text("\(gateway.gatewayHost):\(gateway.gatewayPort)")
-                            .font(.caption)
+                        Text(gateway.gatewayHost.hasPrefix("ws") ? gateway.gatewayHost : "\(gateway.gatewayHost):\(gateway.gatewayPort)")
+                            .font(.caption2)
                             .foregroundColor(.secondary)
+                            .lineLimit(1)
                     }
                 }
                 Spacer()
