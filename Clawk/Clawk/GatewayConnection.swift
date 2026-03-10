@@ -74,6 +74,18 @@ class GatewayConnection: NSObject, ObservableObject {
     // MARK: - Initialization
 
     init(host: String? = nil, port: Int? = nil, token: String? = nil) {
+        // Migrate stale cached values (localhost/127.0.0.1 don't work on physical devices)
+        let cachedHost = UserDefaults.standard.string(forKey: "gatewayHost")
+        if cachedHost == "127.0.0.1" || cachedHost == "localhost" {
+            UserDefaults.standard.removeObject(forKey: "gatewayHost")
+            UserDefaults.standard.removeObject(forKey: "gatewayPort")
+        }
+        let cachedPort = UserDefaults.standard.integer(forKey: "gatewayPort")
+        if cachedPort == 18789 {
+            // Old port before proxy — clear it
+            UserDefaults.standard.removeObject(forKey: "gatewayPort")
+        }
+
         self.gatewayHost = host ?? UserDefaults.standard.string(forKey: "gatewayHost") ?? "100.96.61.83"
         self.gatewayPort = port ?? UserDefaults.standard.integer(forKey: "gatewayPort").nonZero ?? 18790
         self.gatewayToken = token ?? UserDefaults.standard.string(forKey: "gatewayToken") ?? "b3b6e49d493b3f0f8443575ebfd9fb1caaf103a5e333d106"

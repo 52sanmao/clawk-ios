@@ -41,11 +41,27 @@ struct HomeView: View {
                 .padding()
             }
             .refreshable {
+                // Force reconnect on pull-to-refresh if disconnected
+                if !gateway.isConnected && !gateway.isConnecting {
+                    gateway.connect()
+                    // Wait briefly for connection to establish
+                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                }
                 await loadAllData()
             }
             .navigationTitle("Home")
             .onAppear {
+                // Trigger gateway connect if not already connected
+                if !gateway.isConnected && !gateway.isConnecting {
+                    gateway.connect()
+                }
                 Task { await loadAllData() }
+            }
+            .onChange(of: gateway.isConnected) { _, connected in
+                if connected {
+                    // Gateway just connected — reload gateway-dependent data
+                    Task { await loadAllData() }
+                }
             }
         }
     }
@@ -53,35 +69,60 @@ struct HomeView: View {
     // MARK: - Connection Header
 
     private var connectionHeader: some View {
-        HStack(spacing: 12) {
-            if let identity = gateway.agentIdentity {
-                Text(identity.emoji)
-                    .font(.title)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(identity.name)
-                        .font(.headline)
-                    Text(identity.creature)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                }
+        Button(action: {
+            if !gateway.isConnected && !gateway.isConnecting {
+                gateway.connect()
             }
-            Spacer()
-            VStack(alignment: .trailing, spacing: 4) {
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(gateway.isConnected ? Color.green : Color.red)
-                        .frame(width: 8, height: 8)
-                    Text(gateway.isConnected ? "Live" : "Offline")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
+        }) {
+            HStack(spacing: 12) {
+                if let identity = gateway.agentIdentity {
+                    Text(identity.emoji)
+                        .font(.title)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(identity.name)
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                        Text(identity.creature)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
+                } else {
+                    Image(systemName: "antenna.radiowaves.left.and.right")
+                        .font(.title2)
+                        .foregroundColor(gateway.isConnected ? .green : (gateway.isConnecting ? .orange : .red))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(gateway.isConnecting ? "Connecting..." : (gateway.isConnected ? "Connected" : "Tap to reconnect"))
+                            .font(.headline)
+                            .foregroundColor(.primary)
+                        Text("\(gateway.gatewayHost):\(gateway.gatewayPort)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                    }
                 }
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(dashboardAPI.isReachable ? Color.blue : Color.orange)
-                        .frame(width: 8, height: 8)
-                    Text("Dashboard")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
+                Spacer()
+                VStack(alignment: .trailing, spacing: 4) {
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(gateway.isConnected ? Color.green : (gateway.isConnecting ? Color.orange : Color.red))
+                            .frame(width: 8, height: 8)
+                        Text(gateway.isConnected ? "Live" : (gateway.isConnecting ? "Connecting" : "Offline"))
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    HStack(spacing: 4) {
+                        Circle()
+                            .fill(dashboardAPI.isReachable ? Color.blue : Color.orange)
+                            .frame(width: 8, height: 8)
+                        Text("Dashboard")
+                            .font(.caption2)
+                            .foregroundColor(.secondary)
+                    }
+                    if let error = gateway.connectionError {
+                        Text(error)
+                            .font(.caption2)
+                            .foregroundColor(.red)
+                            .lineLimit(2)
+                    }
                 }
             }
         }

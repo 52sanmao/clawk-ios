@@ -78,6 +78,11 @@ struct ChatListView: View {
             .onAppear {
                 Task { await loadSessions() }
             }
+            .onChange(of: gateway.isConnected) { _, connected in
+                if connected {
+                    Task { await loadSessions() }
+                }
+            }
         }
     }
 

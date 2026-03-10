@@ -11,6 +11,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.kishparikh.clawk
         INFOPLIST_FILE: Clawk/Info.plist
         CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: GN3TH9WD6W
     info:
       path: Clawk/Info.plist
       properties:

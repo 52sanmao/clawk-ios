@@ -34,12 +34,20 @@ struct CronManagementView: View {
                 }
 
                 if gateway.cronJobs.isEmpty && !isRefreshing {
-                    EmptyStateView(icon: "clock.arrow.2.circlepath", message: "No cron jobs found")
+                    if !gateway.isConnected {
+                        EmptyStateView(icon: "wifi.slash", message: "Gateway offline — connect to load cron jobs")
+                    } else {
+                        EmptyStateView(icon: "clock.arrow.2.circlepath", message: "No cron jobs found")
+                    }
                 }
             }
             .padding()
         }
         .refreshable {
+            if !gateway.isConnected && !gateway.isConnecting {
+                gateway.connect()
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+            }
             await refreshCronJobs()
         }
         .sheet(item: $selectedJob) { job in
@@ -47,6 +55,11 @@ struct CronManagementView: View {
         }
         .onAppear {
             Task { await refreshCronJobs() }
+        }
+        .onChange(of: gateway.isConnected) { _, connected in
+            if connected {
+                Task { await refreshCronJobs() }
+            }
         }
     }
 
