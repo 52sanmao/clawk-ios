@@ -1,6 +1,6 @@
 import SwiftUI
 
-// MARK: - Chat Detail View (Full-page chat, pushed from ChatListView)
+// MARK: - Chat Detail View
 
 struct ChatDetailView: View {
     @EnvironmentObject var gateway: GatewayConnection
@@ -13,11 +13,16 @@ struct ChatDetailView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            GatewayStatusBar(connection: gateway)
-
+            // Messages
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(spacing: 12) {
+                    LazyVStack(spacing: 4) {
+                        // Date header for first message
+                        if let first = gateway.messages.first {
+                            DateHeader(date: first.timestamp)
+                                .padding(.top, 8)
+                        }
+
                         ForEach(gateway.messages) { message in
                             ChatMessageView(
                                 message: message,
@@ -27,22 +32,14 @@ struct ChatDetailView: View {
                             .id(message.id)
                         }
 
-                        // Waiting for response indicator + status
+                        // Typing indicator
                         if gateway.isWaitingForResponse && gateway.thinkingSteps.isEmpty {
-                            VStack(spacing: 4) {
-                                TypingIndicator()
-                                if let status = gateway.chatStatus {
-                                    Text(status)
-                                        .font(.caption2)
-                                        .foregroundColor(.secondary)
-                                        .padding(.leading, 44)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                }
-                            }
-                            .id("typing")
+                            TypingBubble(status: gateway.chatStatus)
+                                .id("typing")
+                                .transition(.opacity.combined(with: .scale(scale: 0.95)))
                         }
 
-                        // Chat error display
+                        // Error
                         if let error = gateway.chatError {
                             ChatErrorView(error: error, onRetry: {
                                 if let lastUserMsg = gateway.messages.last(where: { $0.role == "user" }) {
@@ -53,42 +50,45 @@ struct ChatDetailView: View {
                             .id("error")
                         }
 
+                        // Thinking steps
                         if !gateway.thinkingSteps.isEmpty {
                             ThinkingStepsView(steps: gateway.thinkingSteps)
                                 .id("thinking")
                         }
                     }
-                    .padding(.vertical, 8)
+                    .padding(.bottom, 8)
                 }
-                .onChange(of: gateway.messages.count) {
-                    scrollToBottom(proxy)
-                }
-                .onChange(of: gateway.thinkingSteps.count) {
-                    scrollToBottom(proxy)
-                }
-                .onChange(of: gateway.chatError) {
-                    scrollToBottom(proxy)
-                }
+                .scrollDismissesKeyboard(.interactively)
+                .onChange(of: gateway.messages.count) { scrollToBottom(proxy) }
+                .onChange(of: gateway.thinkingSteps.count) { scrollToBottom(proxy) }
+                .onChange(of: gateway.chatError) { scrollToBottom(proxy) }
             }
 
-            MessageInputBar(
+            // Input bar
+            ChatInputBar(
                 text: $messageText,
-                isEnabled: gateway.isConnected,
+                isConnected: gateway.isConnected,
+                isWaiting: gateway.isWaitingForResponse,
                 onSend: sendMessage
             )
             .focused($isInputFocused)
         }
+        .background(Color(.systemBackground))
         .navigationTitle(navTitle)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                ChatNavHeader(
+                    title: navTitle,
+                    isConnected: gateway.isConnected,
+                    isConnecting: gateway.isConnecting
+                )
+            }
             ToolbarItem(placement: .navigationBarTrailing) {
-                HStack(spacing: 12) {
-                    Button(action: { showingDebugLog = true }) {
-                        Image(systemName: "ant.fill")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                    }
-                    ConnectionIndicator(isConnected: gateway.isConnected)
+                Button(action: { showingDebugLog = true }) {
+                    Image(systemName: "ant.fill")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
                 }
             }
         }
@@ -117,7 +117,9 @@ struct ChatDetailView: View {
     private func sendMessage() {
         let text = messageText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        gateway.sendMessage(text)
+        withAnimation(.easeOut(duration: 0.15)) {
+            gateway.sendMessage(text)
+        }
         messageText = ""
     }
 
@@ -145,5 +147,146 @@ struct ChatDetailView: View {
                 print("[Chat] Failed to load session history: \(error)")
             }
         }
+    }
+}
+
+// MARK: - Chat Nav Header (inline title with connection dot)
+
+struct ChatNavHeader: View {
+    let title: String
+    let isConnected: Bool
+    let isConnecting: Bool
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(isConnected ? Color.green : (isConnecting ? Color.orange : Color.red))
+                .frame(width: 7, height: 7)
+
+            Text(title)
+                .font(.system(size: 16, weight: .semibold))
+        }
+    }
+}
+
+// MARK: - Date Header
+
+struct DateHeader: View {
+    let date: Date
+
+    var body: some View {
+        Text(formatted)
+            .font(.system(size: 11, weight: .medium))
+            .foregroundColor(.secondary)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 4)
+            .background(Color(.systemGray6))
+            .cornerRadius(10)
+            .padding(.vertical, 4)
+    }
+
+    private var formatted: String {
+        let cal = Calendar.current
+        if cal.isDateInToday(date) { return "Today" }
+        if cal.isDateInYesterday(date) { return "Yesterday" }
+        let fmt = DateFormatter()
+        fmt.dateFormat = "EEEE, MMM d"
+        return fmt.string(from: date)
+    }
+}
+
+// MARK: - Typing Bubble
+
+struct TypingBubble: View {
+    let status: String?
+    @State private var phase = 0
+    let timer = Timer.publish(every: 0.35, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 6) {
+            // Small avatar placeholder
+            Circle()
+                .fill(Color(.systemGray4))
+                .frame(width: 28, height: 28)
+                .overlay(
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 12))
+                        .foregroundColor(.secondary)
+                )
+
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(spacing: 5) {
+                    ForEach(0..<3, id: \.self) { i in
+                        Circle()
+                            .fill(Color.secondary)
+                            .frame(width: 6, height: 6)
+                            .scaleEffect(i == phase % 3 ? 1.2 : 0.7)
+                            .opacity(i == phase % 3 ? 1 : 0.4)
+                    }
+                }
+                .animation(.easeInOut(duration: 0.25), value: phase)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(Color(.systemGray5))
+                .clipShape(BubbleShape(isUser: false))
+
+                if let status = status {
+                    Text(status)
+                        .font(.system(size: 10))
+                        .foregroundColor(Color(.tertiaryLabel))
+                        .padding(.leading, 10)
+                }
+            }
+
+            Spacer(minLength: 60)
+        }
+        .padding(.horizontal, 12)
+        .onReceive(timer) { _ in phase += 1 }
+    }
+}
+
+// MARK: - Chat Input Bar
+
+struct ChatInputBar: View {
+    @Binding var text: String
+    let isConnected: Bool
+    let isWaiting: Bool
+    let onSend: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Divider()
+
+            HStack(alignment: .bottom, spacing: 10) {
+                // Text field
+                TextField("Message", text: $text, axis: .vertical)
+                    .font(.system(size: 15))
+                    .lineLimit(1...6)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(Color(.systemGray6))
+                    .clipShape(RoundedRectangle(cornerRadius: 20))
+                    .disabled(!isConnected)
+
+                // Send button
+                Button(action: onSend) {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(.white)
+                        .frame(width: 32, height: 32)
+                        .background(canSend ? Color.blue : Color(.systemGray4))
+                        .clipShape(Circle())
+                }
+                .disabled(!canSend)
+                .animation(.easeOut(duration: 0.15), value: canSend)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+            .background(.ultraThinMaterial)
+        }
+    }
+
+    private var canSend: Bool {
+        isConnected && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !isWaiting
     }
 }

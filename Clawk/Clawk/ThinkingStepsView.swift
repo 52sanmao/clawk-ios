@@ -6,14 +6,14 @@ struct ThinkingStepsView: View {
     let steps: [GatewayThinkingStep]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             ForEach(steps) { step in
                 ThinkingStepRow(step: step)
-                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
     }
 }
 
@@ -23,46 +23,30 @@ struct ThinkingStepRow: View {
 
     var body: some View {
         HStack(spacing: 8) {
-            // Icon based on type
             ThinkingStepIcon(step: step)
-                .frame(width: 20, height: 20)
+                .frame(width: 18, height: 18)
 
-            VStack(alignment: .leading, spacing: 4) {
-                HStack {
-                    Text(step.displayText)
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-                        .lineLimit(isExpanded ? nil : 1)
+            Text(step.displayText)
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .lineLimit(isExpanded ? nil : 1)
 
-                    Spacer()
+            Spacer()
 
-                    // Duration badge for completed tool calls
-                    if let duration = step.durationMs {
-                        Text("\(duration)ms")
-                            .font(.caption2)
-                            .foregroundColor(.green)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(Color.green.opacity(0.1))
-                            .cornerRadius(4)
-                    }
-
-                    // Status indicator
-                    if let status = step.status {
-                        StatusDot(status: status)
-                    }
-                }
-
-                // Expandable details
-                if isExpanded, step.type == .toolCall || step.type == .toolResult {
-                    if let toolName = step.toolName {
-                        Text("Tool: \(toolName)")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                }
+            if let duration = step.durationMs {
+                Text("\(duration)ms")
+                    .font(.system(size: 10, weight: .medium, design: .monospaced))
+                    .foregroundColor(.green)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Color.green.opacity(0.1))
+                    .cornerRadius(4)
             }
         }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(Color(.systemGray6).opacity(0.6))
+        .cornerRadius(8)
         .contentShape(Rectangle())
         .onTapGesture {
             withAnimation(.easeInOut(duration: 0.2)) {
@@ -79,15 +63,14 @@ struct ThinkingStepIcon: View {
         Group {
             switch step.type {
             case .thinking:
-                // Animated dots for thinking
                 ThinkingDots()
             case .toolCall:
-                Image(systemName: "wrench.fill")
-                    .font(.caption)
+                Image(systemName: "terminal.fill")
+                    .font(.system(size: 10))
                     .foregroundColor(.blue)
             case .toolResult:
                 Image(systemName: statusIcon)
-                    .font(.caption)
+                    .font(.system(size: 10))
                     .foregroundColor(statusColor)
             }
         }
@@ -95,23 +78,17 @@ struct ThinkingStepIcon: View {
 
     private var statusIcon: String {
         switch step.status {
-        case "ok", "success":
-            return "checkmark.circle.fill"
-        case "error", "failed":
-            return "xmark.circle.fill"
-        default:
-            return "info.circle.fill"
+        case "ok", "success": return "checkmark.circle.fill"
+        case "error", "failed": return "xmark.circle.fill"
+        default: return "info.circle.fill"
         }
     }
 
     private var statusColor: Color {
         switch step.status {
-        case "ok", "success":
-            return .green
-        case "error", "failed":
-            return .red
-        default:
-            return .orange
+        case "ok", "success": return .green
+        case "error", "failed": return .red
+        default: return .orange
         }
     }
 }
@@ -122,10 +99,10 @@ struct ThinkingDots: View {
 
     var body: some View {
         HStack(spacing: 2) {
-            ForEach(0..<3) { index in
+            ForEach(0..<3, id: \.self) { index in
                 Circle()
                     .fill(Color.blue.opacity(opacity(for: index)))
-                    .frame(width: 4, height: 4)
+                    .frame(width: 3, height: 3)
             }
         }
         .onAppear {
@@ -142,78 +119,89 @@ struct ThinkingDots: View {
     }
 }
 
-// MARK: - Chat Message with Thinking
+// MARK: - Chat Message View
 struct ChatMessageView: View {
     let message: GatewayChatMessage
     let agentIdentity: GatewayAgentIdentity?
     let isCurrentUser: Bool
 
     var body: some View {
-        HStack(alignment: .bottom, spacing: 8) {
+        HStack(alignment: .bottom, spacing: 6) {
+            if isCurrentUser {
+                Spacer(minLength: 60)
+            }
+
             if !isCurrentUser {
                 // Agent avatar
                 AgentAvatar(identity: agentIdentity)
+                    .frame(width: 28, height: 28)
             }
 
-            VStack(alignment: isCurrentUser ? .trailing : .leading, spacing: 4) {
-                // Sender name
+            VStack(alignment: isCurrentUser ? .trailing : .leading, spacing: 2) {
+                // Agent name
                 if !isCurrentUser, let name = agentIdentity?.name {
                     Text(name)
-                        .font(.caption2)
+                        .font(.system(size: 11, weight: .medium))
                         .foregroundColor(.secondary)
-                        .padding(.horizontal, 12)
+                        .padding(.leading, 4)
                 }
 
                 // Message bubble
                 ChatBubble(
                     content: message.content,
-                    isUser: isCurrentUser,
-                    color: agentIdentity?.color ?? "#6B7280"
+                    isUser: isCurrentUser
                 )
 
-                // Thinking (only for assistant messages)
-                if !isCurrentUser, let thinking = message.thinking {
+                // Thinking disclosure
+                if !isCurrentUser, let thinking = message.thinking, !thinking.isEmpty {
                     DisclosureGroup("Thinking") {
                         Text(thinking)
-                            .font(.caption)
+                            .font(.system(size: 12, design: .monospaced))
                             .foregroundColor(.secondary)
                             .padding(8)
-                            .background(Color(.secondarySystemBackground))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color(.systemGray6))
                             .cornerRadius(8)
                     }
                     .font(.caption2)
                     .foregroundColor(.secondary)
-                    .padding(.horizontal, 12)
+                    .padding(.horizontal, 4)
                 }
 
                 // Tool calls
                 if let toolCalls = message.toolCalls, !toolCalls.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 4) {
                         ForEach(toolCalls, id: \.id) { toolCall in
                             ToolCallBadge(toolCall: toolCall)
                         }
                     }
-                    .padding(.horizontal, 12)
+                    .padding(.leading, 4)
                 }
 
                 // Timestamp
                 Text(formatTime(message.timestamp))
-                    .font(.caption2)
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal, 12)
+                    .font(.system(size: 10))
+                    .foregroundColor(Color(.tertiaryLabel))
+                    .padding(.horizontal, 4)
             }
 
-            if isCurrentUser {
-                Spacer()
+            if !isCurrentUser {
+                Spacer(minLength: 60)
             }
         }
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 1)
     }
 
     private func formatTime(_ date: Date) -> String {
-        let formatter = RelativeDateTimeFormatter()
-        formatter.unitsStyle = .short
-        return formatter.localizedString(for: date, relativeTo: Date())
+        let formatter = DateFormatter()
+        let calendar = Calendar.current
+        if calendar.isDateInToday(date) {
+            formatter.dateFormat = "h:mm a"
+        } else {
+            formatter.dateFormat = "MMM d, h:mm a"
+        }
+        return formatter.string(from: date).lowercased()
     }
 }
 
@@ -224,42 +212,96 @@ struct AgentAvatar: View {
     var body: some View {
         ZStack {
             Circle()
-                .fill(Color(hex: identity?.color ?? "#6B7280") ?? .gray)
-                .frame(width: 32, height: 32)
+                .fill(
+                    LinearGradient(
+                        colors: [
+                            Color(hex: identity?.color ?? "#6366F1") ?? .indigo,
+                            (Color(hex: identity?.color ?? "#6366F1") ?? .indigo).opacity(0.7)
+                        ],
+                        startPoint: .topLeading,
+                        endPoint: .bottomTrailing
+                    )
+                )
 
             Text(identity?.emoji ?? "🤖")
-                .font(.title3)
+                .font(.system(size: 14))
         }
     }
 }
 
-// MARK: - Chat Bubble (for Gateway chat messages)
+// MARK: - Chat Bubble
 struct ChatBubble: View {
     let content: String
     let isUser: Bool
-    let color: String
 
     var body: some View {
         Text(content)
-            .font(.body)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
+            .font(.system(size: 15))
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
             .background(backgroundColor)
             .foregroundColor(foregroundColor)
-            .cornerRadius(16)
-            .cornerRadius(isUser ? 16 : 4, corners: isUser ? [.topLeft, .topRight, .bottomLeft] : [.topRight, .bottomLeft, .bottomRight])
+            .clipShape(BubbleShape(isUser: isUser))
     }
 
     private var backgroundColor: Color {
         if isUser {
-            return Color(hex: color) ?? .blue
+            return Color.blue
         } else {
-            return Color(.secondarySystemBackground)
+            return Color(.systemGray5)
         }
     }
 
     private var foregroundColor: Color {
         isUser ? .white : .primary
+    }
+}
+
+// MARK: - Bubble Shape (iMessage-style)
+struct BubbleShape: Shape {
+    let isUser: Bool
+
+    func path(in rect: CGRect) -> Path {
+        let radius: CGFloat = 18
+        let tailSize: CGFloat = 6
+
+        var path = Path()
+
+        if isUser {
+            // User bubble: rounded with tail on bottom-right
+            path.addRoundedRect(
+                in: CGRect(x: rect.minX, y: rect.minY, width: rect.width - tailSize, height: rect.height),
+                cornerSize: CGSize(width: radius, height: radius)
+            )
+            // Small tail
+            path.move(to: CGPoint(x: rect.maxX - tailSize, y: rect.maxY - radius))
+            path.addQuadCurve(
+                to: CGPoint(x: rect.maxX, y: rect.maxY),
+                control: CGPoint(x: rect.maxX - tailSize, y: rect.maxY)
+            )
+            path.addQuadCurve(
+                to: CGPoint(x: rect.maxX - tailSize - 4, y: rect.maxY),
+                control: CGPoint(x: rect.maxX - tailSize - 2, y: rect.maxY)
+            )
+        } else {
+            // Agent bubble: rounded with tail on bottom-left
+            path.addRoundedRect(
+                in: CGRect(x: rect.minX + tailSize, y: rect.minY, width: rect.width - tailSize, height: rect.height),
+                cornerSize: CGSize(width: radius, height: radius)
+            )
+            // Small tail
+            path.move(to: CGPoint(x: rect.minX + tailSize, y: rect.maxY - radius))
+            path.addQuadCurve(
+                to: CGPoint(x: rect.minX, y: rect.maxY),
+                control: CGPoint(x: rect.minX + tailSize, y: rect.maxY)
+            )
+            path.addQuadCurve(
+                to: CGPoint(x: rect.minX + tailSize + 4, y: rect.maxY),
+                control: CGPoint(x: rect.minX + tailSize + 2, y: rect.maxY)
+            )
+        }
+
+        return path
     }
 }
 
@@ -270,17 +312,17 @@ struct ToolCallBadge: View {
 
     var body: some View {
         Button(action: { showDetails.toggle() }) {
-            HStack(spacing: 4) {
-                Image(systemName: "wrench.fill")
-                    .font(.caption2)
+            HStack(spacing: 3) {
+                Image(systemName: "terminal.fill")
+                    .font(.system(size: 9))
                 Text(toolCall.name)
-                    .font(.caption2)
+                    .font(.system(size: 10, weight: .medium))
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
-            .background(Color.blue.opacity(0.1))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(Color.blue.opacity(0.08))
             .foregroundColor(.blue)
-            .cornerRadius(4)
+            .cornerRadius(6)
         }
         .sheet(isPresented: $showDetails) {
             ToolCallDetailView(toolCall: toolCall)
@@ -307,15 +349,14 @@ struct ToolCallDetailView: View {
                             .foregroundColor(.secondary)
                     } else {
                         ForEach(Array(toolCall.arguments.keys.sorted()), id: \.self) { key in
-                            HStack {
+                            VStack(alignment: .leading, spacing: 4) {
                                 Text(key)
                                     .font(.caption)
                                     .foregroundColor(.secondary)
-                                Spacer()
                                 if let value = toolCall.arguments[key] as? String {
                                     Text(value)
-                                        .font(.caption)
-                                        .lineLimit(1)
+                                        .font(.system(size: 13, design: .monospaced))
+                                        .lineLimit(5)
                                 }
                             }
                         }
@@ -331,9 +372,7 @@ struct ToolCallDetailView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
-                        dismiss()
-                    }
+                    Button("Done") { dismiss() }
                 }
             }
         }

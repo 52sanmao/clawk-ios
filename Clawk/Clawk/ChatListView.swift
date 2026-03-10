@@ -13,9 +13,6 @@ struct ChatListView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // Connection status
-                GatewayStatusBar(connection: gateway)
-
                 if isLoading && allSessions.isEmpty {
                     VStack(spacing: 16) {
                         Spacer()
