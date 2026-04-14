@@ -200,11 +200,20 @@ class GatewayConnection: NSObject, ObservableObject {
         }
     }
 
+    private func clearStoredDeviceToken() {
+        UserDefaults.standard.removeObject(forKey: "gatewayDeviceToken")
+        self.deviceToken = UUID().uuidString
+        UserDefaults.standard.set(self.deviceToken, forKey: "gatewayDeviceToken")
+    }
+
     // MARK: - Protocol v3 Handshake
 
     private func performHandshake() {
         guard !connectSent else { return }
         connectSent = true
+
+        let savedDeviceToken = UserDefaults.standard.string(forKey: "gatewayDeviceToken")?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let authToken = (savedDeviceToken?.isEmpty == false) ? savedDeviceToken! : gatewayToken
 
         var params: [String: Any] = [
             "minProtocol": 3,
@@ -221,12 +230,12 @@ class GatewayConnection: NSObject, ObservableObject {
             "caps": ["tool-events"] as [String]
         ]
 
-        if !gatewayToken.isEmpty {
-            params["auth"] = ["token": gatewayToken]
+        if !authToken.isEmpty {
+            params["auth"] = ["token": authToken]
         }
 
-        let tokenPrefix = String(gatewayToken.prefix(8))
-        print("[Gateway] Sending connect request, token=\(gatewayToken.isEmpty ? "NONE" : tokenPrefix + "..."), host=\(gatewayHost), nonce=\(connectNonce ?? "nil")")
+        let tokenPrefix = String(authToken.prefix(8))
+        print("[Gateway] Sending connect request, token=\(authToken.isEmpty ? "NONE" : tokenPrefix + "..."), host=\(gatewayHost), nonce=\(connectNonce ?? "nil")")
 
         sendRequest(method: "connect", params: params) { [weak self] result in
             DispatchQueue.main.async {
@@ -255,7 +264,11 @@ class GatewayConnection: NSObject, ObservableObject {
 
                 case .failure(let error):
                     print("[Gateway] Connect failed: \(error)")
-                    self?.connectionError = error.localizedDescription
+                    let description = error.localizedDescription
+                    if description.contains("missing scope: operator.read") {
+                        self?.clearStoredDeviceToken()
+                    }
+                    self?.connectionError = description
                     self?.isConnecting = false
                 }
             }

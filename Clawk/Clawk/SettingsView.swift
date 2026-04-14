@@ -21,15 +21,16 @@ struct SettingsView: View {
             Form {
                 // Gateway connection
                 Section {
-                    TextField("Host", text: $gatewayHost)
+                    TextField("Host / WebSocket URL", text: $gatewayHost)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
 
                     TextField("Port", text: $gatewayPort)
                         .keyboardType(.numberPad)
 
-                    SecureField("Token (optional)", text: $gatewayToken)
-                        .textInputAutocapitalization(.never)
+                    Text("Supports a full ws:// or wss:// gateway URL, including path prefixes such as /f5gxy9/.")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
 
                     HStack {
                         Circle()
