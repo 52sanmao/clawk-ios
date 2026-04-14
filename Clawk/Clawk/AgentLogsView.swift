@@ -12,7 +12,7 @@ struct AgentLogsView: View {
     @State private var cancellable: AnyCancellable?
 
     enum LogLevel: String, CaseIterable {
-        case all = "All"
+        case all = "全部"
         case info = "info"
         case warn = "warn"
         case error = "error"
@@ -46,16 +46,16 @@ struct AgentLogsView: View {
 
             // Bottom bar
             HStack {
-                Text("\(filteredLogs.count) entries")
+                Text("\(filteredLogs.count) 条记录")
                     .font(.caption2)
                     .foregroundColor(.secondary)
                 Spacer()
                 Button(action: { logEntries.removeAll() }) {
-                    Text("Clear")
+                    Text("清除")
                         .font(.caption)
                 }
                 Button(action: { refreshLogs() }) {
-                    Label("Refresh", systemImage: "arrow.clockwise")
+                    Label("刷新", systemImage: "arrow.clockwise")
                         .font(.caption)
                 }
             }
@@ -110,7 +110,7 @@ struct LogFilterBar: View {
         VStack(spacing: 8) {
             HStack(spacing: 8) {
                 // Level filter
-                Picker("Level", selection: $filterLevel) {
+                Picker("等级", selection: $filterLevel) {
                     ForEach(AgentLogsView.LogLevel.allCases, id: \.self) { level in
                         Text(level.rawValue.capitalized).tag(level)
                     }
@@ -132,7 +132,7 @@ struct LogFilterBar: View {
                 Image(systemName: "magnifyingglass")
                     .foregroundColor(.secondary)
                     .font(.caption)
-                TextField("Search logs...", text: $searchText)
+                TextField("搜索日志...", text: $searchText)
                     .font(.caption)
                     .textInputAutocapitalization(.never)
                 if !searchText.isEmpty {

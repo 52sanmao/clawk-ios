@@ -109,9 +109,9 @@ struct ChatDetailView: View {
 
     private var navTitle: String {
         if let session = session {
-            return session.agentName ?? session.agentId ?? "Chat"
+            return session.agentName ?? session.agentId ?? "聊天"
         }
-        return gateway.agentIdentity?.name ?? "New Chat"
+        return gateway.agentIdentity?.name ?? "新对话"
     }
 
     private func sendMessage() {
@@ -187,8 +187,8 @@ struct DateHeader: View {
 
     private var formatted: String {
         let cal = Calendar.current
-        if cal.isDateInToday(date) { return "Today" }
-        if cal.isDateInYesterday(date) { return "Yesterday" }
+        if cal.isDateInToday(date) { return "今天" }
+        if cal.isDateInYesterday(date) { return "昨天" }
         let fmt = DateFormatter()
         fmt.dateFormat = "EEEE, MMM d"
         return fmt.string(from: date)
@@ -259,7 +259,7 @@ struct ChatInputBar: View {
 
             HStack(alignment: .bottom, spacing: 10) {
                 // Text field
-                TextField("Message", text: $text, axis: .vertical)
+                TextField("消息", text: $text, axis: .vertical)
                     .font(.system(size: 15))
                     .lineLimit(1...6)
                     .padding(.horizontal, 14)

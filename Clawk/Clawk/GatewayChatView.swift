@@ -59,7 +59,7 @@ struct GatewayChatView: View {
                 )
                 .focused($isInputFocused)
             }
-            .navigationTitle(gateway.agentIdentity?.name ?? "Chat")
+            .navigationTitle(gateway.agentIdentity?.name ?? "聊天")
             .navigationBarTitleDisplayMode(.large)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
@@ -133,7 +133,7 @@ struct GatewayStatusBar: View {
             }
             
             if !connection.isConnected {
-                Button("Reconnect") {
+                Button("重新连接") {
                     connection.connect()
                 }
                 .font(.caption)
@@ -151,9 +151,9 @@ struct GatewayStatusBar: View {
     }
     
     private var statusText: String {
-        if connection.isConnected { return "Live" }
-        if connection.isConnecting { return "Connecting..." }
-        return "Offline"
+        if connection.isConnected { return "在线" }
+        if connection.isConnecting { return "连接中..." }
+        return "离线"
     }
 }
 
@@ -180,7 +180,7 @@ struct MessageInputBar: View {
     
     var body: some View {
         HStack(spacing: 12) {
-            TextField("Message...", text: $text, axis: .vertical)
+            TextField("消息...", text: $text, axis: .vertical)
                 .textFieldStyle(RoundedBorderTextFieldStyle())
                 .lineLimit(1...5)
                 .disabled(!isEnabled)
@@ -209,15 +209,15 @@ struct GatewaySettingsView: View {
     var body: some View {
         NavigationView {
             Form {
-                Section("Gateway Connection") {
-                    TextField("Host", text: $host)
+                Section("网关连接") {
+                    TextField("主机", text: $host)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                     
-                    TextField("Port", text: $port)
+                    TextField("端口", text: $port)
                         .keyboardType(.numberPad)
                     
-                    Button(gateway.isConnected ? "Disconnect" : "Connect") {
+                    Button(gateway.isConnected ? "断开连接" : "连接") {
                         if gateway.isConnected {
                             gateway.disconnect()
                         } else {
@@ -228,17 +228,17 @@ struct GatewaySettingsView: View {
                     .foregroundColor(gateway.isConnected ? .red : .blue)
                 }
                 
-                Section("Agent Identity") {
+                Section("代理身份") {
                     if let identity = gateway.agentIdentity {
                         HStack {
-                            Text("Name")
+                            Text("名称")
                             Spacer()
                             Text(identity.name)
                                 .foregroundColor(.secondary)
                         }
                         
                         HStack {
-                            Text("Creature")
+                            Text("生物")
                             Spacer()
                             Text(identity.creature)
                                 .foregroundColor(.secondary)
@@ -246,7 +246,7 @@ struct GatewaySettingsView: View {
                         
                         if let vibe = identity.vibe {
                             HStack {
-                                Text("Vibe")
+                                Text("风格")
                                 Spacer()
                                 Text(vibe)
                                     .foregroundColor(.secondary)
@@ -254,48 +254,48 @@ struct GatewaySettingsView: View {
                         }
                         
                         HStack {
-                            Text("Emoji")
+                            Text("表情")
                             Spacer()
                             Text(identity.emoji)
                         }
                     } else {
-                        Text("No identity synced yet")
+                        Text("尚未同步身份")
                             .foregroundColor(.secondary)
                     }
                 }
-                
-                Section("Chat History") {
-                    Button("Clear Messages") {
+
+                Section("聊天记录") {
+                    Button("清除消息") {
                         showClearConfirmation = true
                     }
                     .foregroundColor(.red)
                     
-                    Text("\(gateway.messages.count) messages")
+                    Text("\(gateway.messages.count) 条消息")
                         .foregroundColor(.secondary)
                 }
                 
-                Section("Debug") {
-                    Text("Device Token: \(gateway.publicDeviceToken.prefix(8))...")
+                Section("调试") {
+                    Text("设备令牌: \(gateway.publicDeviceToken.prefix(8))...")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
             }
-            .navigationTitle("Gateway Settings")
+            .navigationTitle("网关设置")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") {
+                    Button("完成") {
                         dismiss()
                     }
                 }
             }
-            .alert("Clear Messages?", isPresented: $showClearConfirmation) {
-                Button("Cancel", role: .cancel) { }
-                Button("Clear", role: .destructive) {
+            .alert("清除消息？", isPresented: $showClearConfirmation) {
+                Button("取消", role: .cancel) { }
+                Button("清除", role: .destructive) {
                     gateway.clearMessages()
                 }
             } message: {
-                Text("This will delete all messages in the current session.")
+                Text("这将删除当前会话中的所有消息。")
             }
         }
     }

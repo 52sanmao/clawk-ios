@@ -137,7 +137,7 @@ class GatewayConnection: NSObject, ObservableObject {
         debugAppend("Connecting to \(urlString)...")
         guard let url = URL(string: urlString) else {
             DispatchQueue.main.async {
-                self.connectionError = "Invalid gateway URL"
+                self.connectionError = "无效的网关URL"
                 self.isConnecting = false
             }
             return
@@ -495,7 +495,7 @@ class GatewayConnection: NSObject, ObservableObject {
             } else {
                 let errorInfo = json["error"] as? [String: Any] ?? [:]
                 let code = errorInfo["code"] as? String ?? "UNKNOWN"
-                let message = errorInfo["message"] as? String ?? "Unknown error"
+                let message = errorInfo["message"] as? String ?? "未知错误"
                 pending.fail(with: GatewayError.from(code: code, message: message))
             }
             return
@@ -512,7 +512,7 @@ class GatewayConnection: NSObject, ObservableObject {
             } else {
                 let errorInfo = json["error"] as? [String: Any] ?? [:]
                 let code = errorInfo["code"] as? String ?? "UNKNOWN"
-                let message = errorInfo["message"] as? String ?? "Unknown error"
+                let message = errorInfo["message"] as? String ?? "未知错误"
                 callback.completion(.failure(GatewayError.from(code: code, message: message)))
             }
         }
@@ -574,7 +574,7 @@ class GatewayConnection: NSObject, ObservableObject {
             case .presence:
                 break
             case .shutdown:
-                self?.connectionError = "Gateway shutting down"
+                self?.connectionError = "网关正在关闭"
                 self?.isConnected = false
             case .unknown:
                 gatewayLog.debug("Unknown event: \(eventName)")
@@ -594,7 +594,7 @@ class GatewayConnection: NSObject, ObservableObject {
         if isWaitingForResponse {
             isWaitingForResponse = false
             chatError = nil
-            chatStatus = "Agent responding..."
+            chatStatus = "代理响应中..."
             cancelResponseTimeout()
         }
 
@@ -620,7 +620,7 @@ class GatewayConnection: NSObject, ObservableObject {
             let toolCall = GatewayToolCall(id: id, name: name, arguments: args)
             pendingToolCalls[id] = toolCall
 
-            let step = GatewayThinkingStep(id: id, content: "Using \(name)...", timestamp: Date(), type: .toolCall, toolName: name)
+            let step = GatewayThinkingStep(id: id, content: "正在使用 \(name)...", timestamp: Date(), type: .toolCall, toolName: name)
             thinkingSteps.append(step)
 
         case "tool_result":
@@ -659,7 +659,7 @@ class GatewayConnection: NSObject, ObservableObject {
 
         case "identity":
             agentIdentity = GatewayAgentIdentity(
-                name: payload["name"] as? String ?? "Assistant",
+                name: payload["name"] as? String ?? "助手",
                 creature: payload["creature"] as? String ?? "AI",
                 vibe: payload["vibe"] as? String,
                 emoji: payload["emoji"] as? String ?? "🤖",
@@ -743,7 +743,7 @@ class GatewayConnection: NSObject, ObservableObject {
 
                 isWaitingForResponse = false
                 chatError = nil
-                chatStatus = "Streaming..."
+                chatStatus = "流式传输中..."
                 cancelResponseTimeout()
                 replaceCurrentMessage(fullText: fullText)
             }
@@ -754,7 +754,7 @@ class GatewayConnection: NSObject, ObservableObject {
 
         case "error":
             // Error response
-            let errorMsg = payload["errorMessage"] as? String ?? "Agent error"
+            let errorMsg = payload["errorMessage"] as? String ?? "代理错误"
             debugAppend("chat error: \(errorMsg)")
             isWaitingForResponse = false
             chatStatus = nil
@@ -878,7 +878,7 @@ class GatewayConnection: NSObject, ObservableObject {
                 let name = json["name"] as? String ?? "unknown"
                 let toolCall = GatewayToolCall(id: id, name: name, arguments: json["arguments"] as? [String: Any] ?? [:])
                 self?.pendingToolCalls[id] = toolCall
-                let step = GatewayThinkingStep(id: id, content: "Using \(name)...", timestamp: Date(), type: .toolCall, toolName: name)
+                let step = GatewayThinkingStep(id: id, content: "正在使用 \(name)...", timestamp: Date(), type: .toolCall, toolName: name)
                 self?.thinkingSteps.append(step)
             case "toolResult":
                 let toolCallId = json["toolCallId"] as? String ?? ""
@@ -894,7 +894,7 @@ class GatewayConnection: NSObject, ObservableObject {
                 self?.pendingToolCalls.removeValue(forKey: toolCallId)
             case "identity":
                 self?.agentIdentity = GatewayAgentIdentity(
-                    name: json["name"] as? String ?? "Assistant",
+                    name: json["name"] as? String ?? "助手",
                     creature: json["creature"] as? String ?? "AI",
                     vibe: json["vibe"] as? String,
                     emoji: json["emoji"] as? String ?? "🤖",
@@ -939,7 +939,7 @@ class GatewayConnection: NSObject, ObservableObject {
             self.messages.append(userMsg)
             self.isWaitingForResponse = true
             self.chatError = nil
-            self.chatStatus = "Sending..."
+            self.chatStatus = "发送中..."
             self.startResponseTimeout()
         }
         debugAppend("sendMessage: \(content.prefix(60))...")
@@ -964,7 +964,7 @@ class GatewayConnection: NSObject, ObservableObject {
                 debugAppend("chat.send OK → keys: \(resultKeys)")
                 // Track the session key for subsequent messages
                 await MainActor.run {
-                    self.chatStatus = "Waiting for agent..."
+                    self.chatStatus = "等待代理响应..."
                     if self.currentSessionKey == nil {
                         self.currentSessionKey = resolvedKey
                     }
@@ -986,7 +986,7 @@ class GatewayConnection: NSObject, ObservableObject {
                     // Events stream independently. The response timeout timer handles the "no events" case.
                     debugAppend("chat.send RPC timed out (30s) — still waiting for events")
                     await MainActor.run {
-                        self.chatStatus = "Agent processing (RPC timeout, waiting for events)..."
+                        self.chatStatus = "代理处理中（RPC超时，等待事件）..."
                     }
                 } else {
                     // Real errors (NOT_LINKED, UNAVAILABLE, etc.) — show to user immediately
@@ -997,7 +997,7 @@ class GatewayConnection: NSObject, ObservableObject {
                             self.isWaitingForResponse = false
                             self.cancelResponseTimeout()
                             self.chatStatus = nil
-                            self.chatError = "Failed to send: \(error.localizedDescription)"
+                            self.chatError = "发送失败: \(error.localizedDescription)"
                         }
                     }
                 }
@@ -1012,7 +1012,7 @@ class GatewayConnection: NSObject, ObservableObject {
                 guard let self = self, self.isWaitingForResponse else { return }
                 self.isWaitingForResponse = false
                 self.chatStatus = nil
-                self.chatError = "No response from agent (timed out after 15s). Check the debug log (🐜) for details."
+                self.chatError = "代理无响应（15秒超时）。请检查调试日志（🐜）了解详情。"
                 self.debugAppend("TIMEOUT: No agent/chat events received within 15s")
             }
         }
@@ -1128,7 +1128,7 @@ class GatewayConnection: NSObject, ObservableObject {
         let result = try await rpc(method: "agents.list")
         if let agentDicts = result["agents"] as? [[String: Any]], let first = agentDicts.first {
             return GatewayAgentIdentity(
-                name: first["name"] as? String ?? first["id"] as? String ?? "Assistant",
+                name: first["name"] as? String ?? first["id"] as? String ?? "助手",
                 creature: first["creature"] as? String ?? "AI",
                 vibe: first["vibe"] as? String,
                 emoji: first["emoji"] as? String ?? "🤖",

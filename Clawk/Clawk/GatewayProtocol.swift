@@ -16,15 +16,15 @@ enum GatewayError: Error, LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .notConnected: return "Not connected to gateway"
-        case .notLinked: return "Client not authenticated"
-        case .notPaired: return "Device pairing required"
-        case .agentTimeout: return "Agent execution timed out"
-        case .invalidRequest(let msg): return "Invalid request: \(msg)"
-        case .unavailable(let retry): return "Gateway unavailable\(retry.map { ", retry in \($0)ms" } ?? "")"
+        case .notConnected: return "未连接到网关"
+        case .notLinked: return "客户端未认证"
+        case .notPaired: return "需要设备配对"
+        case .agentTimeout: return "代理执行超时"
+        case .invalidRequest(let msg): return "无效请求: \(msg)"
+        case .unavailable(let retry): return "网关不可用\(retry.map { "，\($0)ms后重试" } ?? "")"
         case .serverError(_, let msg): return msg
-        case .decodingError(let msg): return "Decoding error: \(msg)"
-        case .timeout: return "Request timed out"
+        case .decodingError(let msg): return "解码错误: \(msg)"
+        case .timeout: return "请求超时"
         }
     }
 
@@ -213,10 +213,10 @@ struct GatewayCronJob: Identifiable {
         if let sched = schedule {
             if let expr = sched.expr { return expr }
             if let cron = sched.cron { return cron }
-            if let every = sched.every { return "every \(every)" }
-            if let at = sched.at { return "at \(at)" }
+            if let every = sched.every { return "每 \(every)" }
+            if let at = sched.at { return "在 \(at)" }
         }
-        return "unknown"
+        return "未知"
     }
 
     /// Parse from a raw dictionary (avoids JSONSerialization round-trip crashes)
@@ -458,8 +458,8 @@ struct GatewayThinkingStep: Identifiable, Codable {
     var displayText: String {
         switch type {
         case .thinking: return content
-        case .toolCall: return toolName.map { "Using \($0)..." } ?? content
-        case .toolResult: return toolName.map { "\($0) completed" } ?? content
+        case .toolCall: return toolName.map { "正在使用 \($0)..." } ?? content
+        case .toolResult: return toolName.map { "\($0) 已完成" } ?? content
         }
     }
 }
@@ -471,7 +471,7 @@ struct GatewayAgentIdentity: Codable {
     let emoji: String
     let color: String
 
-    init(name: String = "Assistant", creature: String = "AI", vibe: String? = nil, emoji: String = "🤖", color: String = "#6B7280") {
+    init(name: String = "助手", creature: String = "AI", vibe: String? = nil, emoji: String = "🤖", color: String = "#6B7280") {
         self.name = name
         self.creature = creature
         self.vibe = vibe

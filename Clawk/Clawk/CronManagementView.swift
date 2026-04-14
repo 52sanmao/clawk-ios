@@ -17,7 +17,7 @@ struct CronManagementView: View {
 
                 // Cron jobs
                 if !regularJobs.isEmpty {
-                    SectionHeader(title: "Cron Jobs", count: regularJobs.count)
+                    SectionHeader(title: "定时任务", count: regularJobs.count)
                     ForEach(regularJobs) { job in
                         CronJobCard(job: job, gateway: gateway)
                             .onTapGesture { selectedJob = job }
@@ -26,7 +26,7 @@ struct CronManagementView: View {
 
                 // Heartbeats
                 if !heartbeatJobs.isEmpty {
-                    SectionHeader(title: "Heartbeats", count: heartbeatJobs.count)
+                    SectionHeader(title: "心跳", count: heartbeatJobs.count)
                     ForEach(heartbeatJobs) { job in
                         CronJobCard(job: job, gateway: gateway)
                             .onTapGesture { selectedJob = job }
@@ -35,9 +35,9 @@ struct CronManagementView: View {
 
                 if gateway.cronJobs.isEmpty && !isRefreshing {
                     if !gateway.isConnected {
-                        EmptyStateView(icon: "wifi.slash", message: "Gateway offline — connect to load cron jobs")
+                        EmptyStateView(icon: "wifi.slash", message: "网关离线 — 请连接以加载定时任务")
                     } else {
-                        EmptyStateView(icon: "clock.arrow.2.circlepath", message: "No cron jobs found")
+                        EmptyStateView(icon: "clock.arrow.2.circlepath", message: "未找到定时任务")
                     }
                 }
             }
@@ -92,33 +92,33 @@ struct CronStatusHeader: View {
     var body: some View {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
             StatCard(
-                title: "Total Jobs",
+                title: "总任务数",
                 value: "\(gateway.cronJobs.count)",
                 icon: "clock.badge.checkmark",
                 color: .blue
             )
             StatCard(
-                title: "Enabled",
+                title: "已启用",
                 value: "\(gateway.cronJobs.filter { $0.enabled ?? false }.count)",
                 icon: "checkmark.circle.fill",
                 color: .green
             )
             StatCard(
-                title: "Heartbeats",
+                title: "心跳",
                 value: "\(gateway.cronJobs.filter { $0.isHeartbeat }.count)",
                 icon: "heart.fill",
                 color: .pink
             )
             if let status = gateway.cronStatus {
                 StatCard(
-                    title: "Next Wake",
+                    title: "下次唤醒",
                     value: status.nextWakeAtMs.map { formatRelativeTime($0) } ?? "—",
                     icon: "alarm",
                     color: .orange
                 )
             } else {
                 StatCard(
-                    title: "Status",
+                    title: "状态",
                     value: gateway.isConnected ? "OK" : "—",
                     icon: "antenna.radiowaves.left.and.right",
                     color: gateway.isConnected ? .green : .gray
@@ -181,7 +181,7 @@ struct CronJobCard: View {
                                 Image(systemName: "play.fill")
                                     .font(.caption2)
                             }
-                            Text("Run")
+                            Text("运行")
                                 .font(.caption2)
                         }
                         .padding(.horizontal, 8)
@@ -220,7 +220,7 @@ struct CronJobCard: View {
                 HStack(spacing: 4) {
                     Image(systemName: "arrow.right")
                         .font(.caption2)
-                    Text("Next: \(formatRelativeTime(nextRunMs))")
+                    Text("下次: \(formatRelativeTime(nextRunMs))")
                         .font(.caption2)
                 }
                 .foregroundColor(.secondary)
@@ -252,14 +252,14 @@ struct CronJobCard: View {
             do {
                 let result = try await gateway.cronRun(id: job.id, mode: "force")
                 await MainActor.run {
-                    runResult = result.ran == true ? "Ran OK" : (result.reason ?? "Skipped")
+                    runResult = result.ran == true ? "运行成功" : (result.reason ?? "已跳过")
                     isRunning = false
                 }
                 let generator = UINotificationFeedbackGenerator()
                 generator.notificationOccurred(result.ran == true ? .success : .warning)
             } catch {
                 await MainActor.run {
-                    runResult = "Error"
+                    runResult = "错误"
                     isRunning = false
                 }
             }
@@ -283,46 +283,46 @@ struct CronJobDetailView: View {
     var body: some View {
         NavigationView {
             List {
-                Section("Details") {
-                    DetailRow(label: "Name", value: job.displayName)
+                Section("详情") {
+                    DetailRow(label: "名称", value: job.displayName)
                     DetailRow(label: "ID", value: job.id)
-                    DetailRow(label: "Schedule", value: job.scheduleDescription)
+                    DetailRow(label: "计划", value: job.scheduleDescription)
                     if let agentId = job.agentId {
-                        DetailRow(label: "Agent", value: agentId)
+                        DetailRow(label: "代理", value: agentId)
                     }
                     if let target = job.sessionTarget {
-                        DetailRow(label: "Session Target", value: target)
+                        DetailRow(label: "会话目标", value: target)
                     }
                     if let wakeMode = job.wakeMode {
-                        DetailRow(label: "Wake Mode", value: wakeMode)
+                        DetailRow(label: "唤醒模式", value: wakeMode)
                     }
-                    DetailRow(label: "Enabled", value: (job.enabled ?? false) ? "Yes" : "No")
-                    DetailRow(label: "Type", value: job.isHeartbeat ? "Heartbeat" : "Cron Job")
+                    DetailRow(label: "已启用", value: (job.enabled ?? false) ? "是" : "否")
+                    DetailRow(label: "类型", value: job.isHeartbeat ? "心跳" : "定时任务")
                     if job.deleteAfterRun == true {
-                        DetailRow(label: "One-shot", value: "Deletes after run")
+                        DetailRow(label: "一次性", value: "运行后删除")
                     }
                 }
 
-                Section("Timing") {
+                Section("时间") {
                     if let lastRunMs = job.lastRunAtMs {
-                        DetailRow(label: "Last Run", value: formatAbsoluteTime(lastRunMs))
+                        DetailRow(label: "上次运行", value: formatAbsoluteTime(lastRunMs))
                     }
                     if let nextRunMs = job.nextRunAtMs {
-                        DetailRow(label: "Next Run", value: formatAbsoluteTime(nextRunMs))
+                        DetailRow(label: "下次运行", value: formatAbsoluteTime(nextRunMs))
                     }
                     if let durationMs = job.lastRunDurationMs {
-                        DetailRow(label: "Last Duration", value: "\(Int(durationMs))ms")
+                        DetailRow(label: "上次耗时", value: "\(Int(durationMs))ms")
                     }
                     if let status = job.lastRunStatus {
                         HStack {
-                            Text("Last Status")
+                            Text("上次状态")
                             Spacer()
                             CronRunStatusBadge(status: status)
                         }
                     }
                 }
 
-                Section("Run History") {
+                Section("运行历史") {
                     if isLoadingRuns {
                         HStack {
                             Spacer()
@@ -330,7 +330,7 @@ struct CronJobDetailView: View {
                             Spacer()
                         }
                     } else if runs.isEmpty {
-                        Text("No run history")
+                        Text("暂无运行记录")
                             .foregroundColor(.secondary)
                     } else {
                         ForEach(runs, id: \.stableId) { run in
@@ -341,7 +341,7 @@ struct CronJobDetailView: View {
 
                 Section {
                     Button(role: .destructive, action: { showDeleteConfirmation = true }) {
-                        Label("Delete Job", systemImage: "trash")
+                        Label("删除任务", systemImage: "trash")
                     }
                 }
             }
@@ -349,15 +349,15 @@ struct CronJobDetailView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") { dismiss() }
+                    Button("完成") { dismiss() }
                 }
             }
             .onAppear { loadRuns() }
-            .alert("Delete \(job.displayName)?", isPresented: $showDeleteConfirmation) {
-                Button("Cancel", role: .cancel) {}
-                Button("Delete", role: .destructive) { deleteJob() }
+            .alert("删除 \(job.displayName)？", isPresented: $showDeleteConfirmation) {
+                Button("取消", role: .cancel) {}
+                Button("删除", role: .destructive) { deleteJob() }
             } message: {
-                Text("This cannot be undone.")
+                Text("此操作无法撤销。")
             }
         }
     }

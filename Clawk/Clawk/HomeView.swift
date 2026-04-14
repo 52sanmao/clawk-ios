@@ -49,7 +49,7 @@ struct HomeView: View {
                 }
                 await loadAllData()
             }
-            .navigationTitle("Home")
+            .navigationTitle("首页")
             .onAppear {
                 // Trigger gateway connect if not already connected
                 if !gateway.isConnected && !gateway.isConnecting {
@@ -91,7 +91,7 @@ struct HomeView: View {
                         .font(.title2)
                         .foregroundColor(gateway.isConnected ? .green : (gateway.isConnecting ? .orange : .red))
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(gateway.isConnecting ? "Connecting..." : (gateway.isConnected ? "Connected" : "Tap to reconnect"))
+                        Text(gateway.isConnecting ? "连接中..." : (gateway.isConnected ? "已连接" : "点击重新连接"))
                             .font(.headline)
                             .foregroundColor(.primary)
                         Text(gateway.gatewayHost.hasPrefix("ws") ? gateway.gatewayHost : "\(gateway.gatewayHost):\(gateway.gatewayPort)")
@@ -106,7 +106,7 @@ struct HomeView: View {
                         Circle()
                             .fill(gateway.isConnected ? Color.green : (gateway.isConnecting ? Color.orange : Color.red))
                             .frame(width: 8, height: 8)
-                        Text(gateway.isConnected ? "Live" : (gateway.isConnecting ? "Connecting" : "Offline"))
+                        Text(gateway.isConnected ? "在线" : (gateway.isConnecting ? "连接中" : "离线"))
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
@@ -114,7 +114,7 @@ struct HomeView: View {
                         Circle()
                             .fill(dashboardAPI.isReachable ? Color.blue : Color.orange)
                             .frame(width: 8, height: 8)
-                        Text("Dashboard")
+                        Text("仪表盘")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
@@ -137,25 +137,25 @@ struct HomeView: View {
     private var overviewSection: some View {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
             StatCard(
-                title: "Agents",
+                title: "代理",
                 value: "\(gateway.agents.count)",
                 icon: "person.2.fill",
                 color: .green
             )
             StatCard(
-                title: "Sessions",
+                title: "会话",
                 value: "\(recentSessions.count)",
                 icon: "bubble.left.and.bubble.right.fill",
                 color: .blue
             )
             StatCard(
-                title: "Cron Jobs",
+                title: "定时任务",
                 value: "\(gateway.cronJobs.count)",
                 icon: "clock.arrow.circlepath",
                 color: .purple
             )
             StatCard(
-                title: costPreferences.appliesSubscriptionCoverage ? "Billed Cost" : "Total Cost",
+                title: costPreferences.appliesSubscriptionCoverage ? "账单费用" : "总费用",
                 value: costString,
                 icon: "dollarsign.circle.fill",
                 color: .orange
@@ -170,11 +170,11 @@ struct HomeView: View {
             // Header
             Button(action: { selectedTab = 1 }) {
                 HStack {
-                    Label("Recent Chats", systemImage: "bubble.left.and.bubble.right.fill")
+                    Label("最近聊天", systemImage: "bubble.left.and.bubble.right.fill")
                         .font(.headline)
                         .foregroundColor(.primary)
                     Spacer()
-                    Text("See all")
+                    Text("查看全部")
                         .font(.caption)
                         .foregroundColor(.blue)
                     Image(systemName: "chevron.right")
@@ -188,7 +188,7 @@ struct HomeView: View {
 
             if recentSessions.isEmpty {
                 HStack {
-                    Text("No recent sessions")
+                    Text("暂无最近会话")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     Spacer()
@@ -204,7 +204,7 @@ struct HomeView: View {
                                     .font(.title3)
 
                                 VStack(alignment: .leading, spacing: 1) {
-                                    Text(session.agentName ?? session.agentId ?? "Unknown")
+                                    Text(session.agentName ?? session.agentId ?? "未知")
                                         .font(.caption)
                                         .fontWeight(.medium)
                                         .foregroundColor(.primary)
@@ -215,7 +215,7 @@ struct HomeView: View {
                                                 .foregroundColor(.blue)
                                         }
                                         if let count = session.messageCount, count > 0 {
-                                            Text("\(count) msgs")
+                                            Text("\(count) 条消息")
                                                 .font(.caption2)
                                                 .foregroundColor(.secondary)
                                         }
@@ -251,11 +251,11 @@ struct HomeView: View {
         VStack(spacing: 0) {
             Button(action: { selectedTab = 2 }) {
                 HStack {
-                    Label("Cron Jobs", systemImage: "clock.arrow.circlepath")
+                    Label("定时任务", systemImage: "clock.arrow.circlepath")
                         .font(.headline)
                         .foregroundColor(.primary)
                     Spacer()
-                    Text("See all")
+                    Text("查看全部")
                         .font(.caption)
                         .foregroundColor(.blue)
                     Image(systemName: "chevron.right")
@@ -269,7 +269,7 @@ struct HomeView: View {
 
             if gateway.cronJobs.isEmpty {
                 HStack {
-                    Text("No cron jobs")
+                    Text("暂无定时任务")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     Spacer()
@@ -286,7 +286,7 @@ struct HomeView: View {
                             .font(.title3)
                             .fontWeight(.bold)
                             .foregroundColor(.green)
-                        Text("Enabled")
+                        Text("已启用")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
@@ -297,7 +297,7 @@ struct HomeView: View {
                             .font(.title3)
                             .fontWeight(.bold)
                             .foregroundColor(.gray)
-                        Text("Disabled")
+                        Text("已禁用")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
@@ -308,7 +308,7 @@ struct HomeView: View {
                             .font(.title3)
                             .fontWeight(.bold)
                             .foregroundColor(.pink)
-                        Text("Heartbeats")
+                        Text("心跳")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
@@ -322,7 +322,7 @@ struct HomeView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "alarm")
                             .font(.caption2)
-                        Text("Next: \(formatRelativeTime(nextWake))")
+                        Text("下次: \(formatRelativeTime(nextWake))")
                             .font(.caption2)
                     }
                     .foregroundColor(.secondary)
@@ -341,11 +341,11 @@ struct HomeView: View {
         VStack(spacing: 0) {
             Button(action: { selectedTab = 3 }) {
                 HStack {
-                    Label("Memory", systemImage: "brain.head.profile")
+                    Label("记忆", systemImage: "brain.head.profile")
                         .font(.headline)
                         .foregroundColor(.primary)
                     Spacer()
-                    Text("See all")
+                    Text("查看全部")
                         .font(.caption)
                         .foregroundColor(.blue)
                     Image(systemName: "chevron.right")
@@ -359,7 +359,7 @@ struct HomeView: View {
 
             if memoryFiles.isEmpty {
                 HStack {
-                    Text("No memory files")
+                    Text("暂无记忆文件")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     Spacer()
@@ -409,7 +409,7 @@ struct HomeView: View {
     private var moreSection: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("More")
+                Text("更多")
                     .font(.headline)
                 Spacer()
             }
@@ -423,27 +423,27 @@ struct HomeView: View {
                         LiveAgentsTab(gateway: gateway)
                             .padding()
                     }
-                    .navigationTitle("Agents")
+                    .navigationTitle("代理")
                 } label: {
-                    moreRow(icon: "person.2.fill", color: .green, title: "Agents", detail: "\(gateway.agents.count)")
+                    moreRow(icon: "person.2.fill", color: .green, title: "代理", detail: "\(gateway.agents.count)")
                 }
 
                 Divider().padding(.leading, 48)
 
                 NavigationLink {
                     LiveSessionsTab(gateway: gateway, dashboardAPI: dashboardAPI)
-                        .navigationTitle("Sessions")
+                        .navigationTitle("会话")
                 } label: {
-                    moreRow(icon: "bubble.left.and.bubble.right", color: .blue, title: "Sessions")
+                    moreRow(icon: "bubble.left.and.bubble.right", color: .blue, title: "会话")
                 }
 
                 Divider().padding(.leading, 48)
 
                 NavigationLink {
                     ApprovalQueueView(gateway: gateway)
-                        .navigationTitle("Approvals")
+                        .navigationTitle("审批")
                 } label: {
-                    moreRow(icon: "checkmark.shield.fill", color: .orange, title: "Approvals",
+                    moreRow(icon: "checkmark.shield.fill", color: .orange, title: "审批",
                             badge: gateway.pendingApprovals.count > 0 ? "\(gateway.pendingApprovals.count)" : nil)
                 }
 
@@ -451,18 +451,18 @@ struct HomeView: View {
 
                 NavigationLink {
                     CostsView(dashboardAPI: dashboardAPI)
-                        .navigationTitle("Costs")
+                        .navigationTitle("费用")
                 } label: {
-                    moreRow(icon: "dollarsign.circle.fill", color: .green, title: "Costs")
+                    moreRow(icon: "dollarsign.circle.fill", color: .green, title: "费用")
                 }
 
                 Divider().padding(.leading, 48)
 
                 NavigationLink {
                     AgentLogsView(gateway: gateway)
-                        .navigationTitle("Logs")
+                        .navigationTitle("日志")
                 } label: {
-                    moreRow(icon: "doc.text.magnifyingglass", color: .indigo, title: "Logs")
+                    moreRow(icon: "doc.text.magnifyingglass", color: .indigo, title: "日志")
                 }
 
                 Divider().padding(.leading, 48)
@@ -470,18 +470,18 @@ struct HomeView: View {
                 NavigationLink {
                     RelayMessagesView()
                         .environmentObject(messageStore)
-                        .navigationTitle("Action Cards")
+                        .navigationTitle("操作卡片")
                 } label: {
-                    moreRow(icon: "bell.badge.fill", color: .red, title: "Action Cards")
+                    moreRow(icon: "bell.badge.fill", color: .red, title: "操作卡片")
                 }
 
                 Divider().padding(.leading, 48)
 
                 NavigationLink {
                     GatewayDebugLogContent(gateway: gateway)
-                        .navigationTitle("Debug Log")
+                        .navigationTitle("调试日志")
                 } label: {
-                    moreRow(icon: "ant.fill", color: .gray, title: "Debug Log")
+                    moreRow(icon: "ant.fill", color: .gray, title: "调试日志")
                 }
 
                 Divider().padding(.leading, 48)
@@ -492,9 +492,9 @@ struct HomeView: View {
                         dashboardAPI: dashboardAPI,
                         messageStore: messageStore
                     )
-                    .navigationTitle("Settings")
+                    .navigationTitle("设置")
                 } label: {
-                    moreRow(icon: "gear", color: .gray, title: "Settings")
+                    moreRow(icon: "gear", color: .gray, title: "设置")
                 }
             }
             .padding(.bottom, 8)

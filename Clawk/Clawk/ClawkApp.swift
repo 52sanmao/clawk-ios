@@ -65,7 +65,7 @@ struct MainTabView: View {
             HomeView(selectedTab: $selectedMainTab)
                 .tag(0)
                 .tabItem {
-                    Label("Home", systemImage: "house.fill")
+                    Label("首页", systemImage: "house.fill")
                 }
                 .badge(gateway.pendingApprovals.count)
 
@@ -73,21 +73,21 @@ struct MainTabView: View {
             ChatListView()
                 .tag(1)
                 .tabItem {
-                    Label("Chat", systemImage: "bubble.left.and.bubble.right.fill")
+                    Label("聊天", systemImage: "bubble.left.and.bubble.right.fill")
                 }
 
             // 3. Cron
             CronTab()
                 .tag(2)
                 .tabItem {
-                    Label("Cron", systemImage: "clock.arrow.circlepath")
+                    Label("定时任务", systemImage: "clock.arrow.circlepath")
                 }
 
             // 4. Memory
             MemoryTab()
                 .tag(3)
                 .tabItem {
-                    Label("Memory", systemImage: "brain.head.profile")
+                    Label("记忆", systemImage: "brain.head.profile")
                 }
         }
     }
@@ -101,7 +101,7 @@ struct CronTab: View {
     var body: some View {
         NavigationStack {
             CronManagementView(gateway: gateway)
-                .navigationTitle("Cron")
+                .navigationTitle("定时任务")
         }
     }
 }
@@ -114,7 +114,7 @@ struct MemoryTab: View {
     var body: some View {
         NavigationStack {
             MemoryView(dashboardAPI: dashboardAPI)
-                .navigationTitle("Memory")
+                .navigationTitle("记忆")
         }
     }
 }
@@ -142,7 +142,7 @@ struct ChatErrorView: View {
                     HStack(spacing: 4) {
                         Image(systemName: "arrow.clockwise")
                             .font(.caption2)
-                        Text("Retry")
+                        Text("重试")
                             .font(.caption)
                             .fontWeight(.medium)
                     }
@@ -236,16 +236,16 @@ struct GatewayDebugLogView: View {
                 }
             }
         }
-        .navigationTitle("Gateway Debug Log")
+        .navigationTitle("网关调试日志")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {
-                Button("Clear") {
+                Button("清除") {
                     gateway.debugLog.removeAll()
                 }
             }
             ToolbarItem(placement: .navigationBarTrailing) {
-                Button("Done") { dismiss() }
+                Button("完成") { dismiss() }
             }
         }
     }

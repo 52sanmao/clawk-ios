@@ -21,12 +21,12 @@ struct CostsView: View {
 
         var label: String {
             switch self {
-            case .hour: return "1H"
-            case .sixHours: return "6H"
-            case .today: return "Today"
-            case .week: return "Week"
-            case .month: return "Month"
-            case .all: return "All"
+            case .hour: return "1小时"
+            case .sixHours: return "6小时"
+            case .today: return "今天"
+            case .week: return "本周"
+            case .month: return "本月"
+            case .all: return "全部"
             }
         }
     }
@@ -63,7 +63,7 @@ struct CostsView: View {
 
                     // Total cost card
                     TotalCostCard(
-                        title: costPreferences.appliesSubscriptionCoverage ? "Effective Billed Cost" : "API Equivalent Cost",
+                        title: costPreferences.appliesSubscriptionCoverage ? "实际账单费用" : "API等效费用",
                         cost: data.totalCost ?? 0,
                         sessions: data.sessionsCount ?? 0,
                         tokens: data.tokensUsed
@@ -71,14 +71,14 @@ struct CostsView: View {
 
                     // Cost by agent
                     if let byAgent = data.byAgent, !byAgent.isEmpty {
-                        CostBreakdownSection(title: "By Agent", items: byAgent.map {
+                        CostBreakdownSection(title: "按代理", items: byAgent.map {
                             CostBreakdownItem(name: $0.agentName, cost: $0.cost)
                         })
                     }
 
                     // Cost by model
                     if let byModel = data.byModel, !byModel.isEmpty {
-                        CostBreakdownSection(title: "By Model", items: byModel.map {
+                        CostBreakdownSection(title: "按模型", items: byModel.map {
                             CostBreakdownItem(name: $0.model, cost: $0.cost)
                         })
                     }
@@ -93,7 +93,7 @@ struct CostsView: View {
                         TokenUsageCard(tokens: tokens)
                     }
                 } else {
-                    EmptyStateView(icon: "dollarsign.circle", message: "No cost data available")
+                    EmptyStateView(icon: "dollarsign.circle", message: "暂无费用数据")
                 }
             }
             .padding()
@@ -167,7 +167,7 @@ struct TotalCostCard: View {
                 HStack(spacing: 4) {
                     Image(systemName: "bubble.left.and.bubble.right")
                         .font(.caption)
-                    Text("\(sessions) sessions")
+                    Text("\(sessions) 个会话")
                         .font(.caption)
                 }
                 .foregroundColor(.secondary)
@@ -201,7 +201,7 @@ struct CostModeNotice: View {
         HStack(alignment: .top, spacing: 8) {
             Image(systemName: "info.circle.fill")
                 .foregroundColor(.blue)
-            Text("Subscription adjustment is enabled. Costs below reflect local billed-cost overrides inferred from model names, not raw API-equivalent pricing.")
+            Text("订阅调整已启用。以下费用反映的是基于模型名称推断的本地账单费用覆盖，而非原始API等效定价。")
                 .font(.caption)
                 .foregroundColor(.secondary)
             Spacer()
@@ -273,7 +273,7 @@ struct DailyCostChart: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Daily Costs")
+            Text("每日费用")
                 .font(.headline)
 
             HStack(alignment: .bottom, spacing: 4) {
@@ -327,13 +327,13 @@ struct TokenUsageCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Token Usage")
+            Text("令牌使用量")
                 .font(.headline)
 
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                TokenStat(label: "Input", value: tokens.input ?? 0, color: .blue)
-                TokenStat(label: "Output", value: tokens.output ?? 0, color: .green)
-                TokenStat(label: "Cached", value: tokens.cached ?? 0, color: .orange)
+                TokenStat(label: "输入", value: tokens.input ?? 0, color: .blue)
+                TokenStat(label: "输出", value: tokens.output ?? 0, color: .green)
+                TokenStat(label: "缓存", value: tokens.cached ?? 0, color: .orange)
             }
         }
         .padding()

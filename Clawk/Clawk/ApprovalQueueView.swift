@@ -13,7 +13,7 @@ struct ApprovalQueueView: View {
                     Image(systemName: "checkmark.shield.fill")
                         .font(.system(size: 48))
                         .foregroundColor(.green)
-                    Text("No pending approvals")
+                    Text("暂无待审批项")
                         .foregroundColor(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -63,7 +63,7 @@ struct ApprovalCard: View {
                     .font(.title3)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(approval.tool ?? approval.command ?? "Action Required")
+                    Text(approval.tool ?? approval.command ?? "需要操作")
                         .font(.subheadline)
                         .fontWeight(.medium)
 
@@ -132,7 +132,7 @@ struct ApprovalCard: View {
                                     .scaleEffect(0.7)
                             }
                             Image(systemName: "checkmark")
-                            Text("Approve")
+                            Text("批准")
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)
@@ -145,7 +145,7 @@ struct ApprovalCard: View {
                     Button(action: { resolve(decision: "deny") }) {
                         HStack {
                             Image(systemName: "xmark")
-                            Text("Deny")
+                            Text("拒绝")
                         }
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 10)

@@ -16,7 +16,7 @@ struct ChatListView: View {
                 if isLoading && allSessions.isEmpty {
                     VStack(spacing: 16) {
                         Spacer()
-                        ProgressView("Loading sessions...")
+                        ProgressView("加载会话中...")
                         Spacer()
                     }
                     .frame(maxWidth: .infinity)
@@ -26,14 +26,14 @@ struct ChatListView: View {
                         Image(systemName: "bubble.left.and.bubble.right")
                             .font(.system(size: 48))
                             .foregroundColor(.secondary)
-                        Text("No conversations yet")
+                        Text("暂无对话")
                             .font(.headline)
                             .foregroundColor(.secondary)
-                        Text("Start a new chat to begin")
+                        Text("开始新对话")
                             .font(.subheadline)
                             .foregroundColor(.secondary)
                         Button(action: { navigateToNewChat = true }) {
-                            Label("New Chat", systemImage: "square.and.pencil")
+                            Label("新对话", systemImage: "square.and.pencil")
                                 .font(.body.weight(.medium))
                                 .padding(.horizontal, 20)
                                 .padding(.vertical, 10)
@@ -55,7 +55,7 @@ struct ChatListView: View {
                     .listStyle(.plain)
                 }
             }
-            .navigationTitle("Chat")
+            .navigationTitle("聊天")
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: { navigateToNewChat = true }) {
@@ -207,7 +207,7 @@ struct ChatSessionRow: View {
 
             VStack(alignment: .leading, spacing: 2) {
                 HStack {
-                    Text(item.agentName ?? item.agentId ?? "Unknown")
+                    Text(item.agentName ?? item.agentId ?? "未知")
                         .font(.subheadline)
                         .fontWeight(.medium)
                         .foregroundColor(.primary)
@@ -228,7 +228,7 @@ struct ChatSessionRow: View {
                             .foregroundColor(.blue)
                     }
                     if let count = item.messageCount, count > 0 {
-                        Text("\(count) msgs")
+                        Text("\(count) 条消息")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }

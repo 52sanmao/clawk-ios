@@ -45,7 +45,7 @@ struct ContentView: View {
                         .frame(height: 150)
                 }
             }
-            .navigationTitle("Clawk")
+            .navigationTitle("智爪")
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
                     Button(action: { showLogs.toggle() }) {
@@ -92,7 +92,7 @@ struct MessageCard: View {
                 HStack {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundColor(.green)
-                    Text("Responded: \(message.response ?? "")")
+                    Text("已回复: \(message.response ?? "")")
                         .font(.subheadline)
                         .foregroundColor(.secondary)
                 }
@@ -114,21 +114,21 @@ struct ConnectionStatus: View {
                 Circle()
                     .fill(Color.orange)
                     .frame(width: 8, height: 8)
-                Text("Connecting...")
+                Text("连接中...")
                     .font(.caption)
                     .foregroundColor(.orange)
             } else if isConnected {
                 Circle()
                     .fill(Color.green)
                     .frame(width: 8, height: 8)
-                Text("Live")
+                Text("在线")
                     .font(.caption)
                     .foregroundColor(.green)
             } else {
                 Circle()
                     .fill(Color.red)
                     .frame(width: 8, height: 8)
-                Text("Offline")
+                Text("离线")
                     .font(.caption)
                     .foregroundColor(.red)
             }
@@ -165,10 +165,10 @@ struct EmptyState: View {
             Image(systemName: "bubble.left.and.bubble.right")
                 .font(.system(size: 48))
                 .foregroundColor(.secondary)
-            Text("No messages yet")
+            Text("暂无消息")
                 .font(.headline)
                 .foregroundColor(.secondary)
-            Text("Pull down to refresh or wait for new messages")
+            Text("下拉刷新或等待新消息")
                 .font(.subheadline)
                 .foregroundColor(.secondary)
         }
@@ -180,10 +180,10 @@ struct ConnectingState: View {
         VStack(spacing: 16) {
             ProgressView()
                 .scaleEffect(1.5)
-            Text("Connecting to server...")
+            Text("正在连接服务器...")
                 .font(.headline)
                 .foregroundColor(.secondary)
-            Text("Make sure Config.swift has the correct URL")
+            Text("请确保 Config.swift 中的URL正确")
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
@@ -197,10 +197,10 @@ struct LogsView: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                Text("Debug Logs")
+                Text("调试日志")
                     .font(.caption.bold())
                 Spacer()
-                Button("Clear", action: onClear)
+                Button("清除", action: onClear)
                     .font(.caption)
             }
             .padding(.horizontal)
