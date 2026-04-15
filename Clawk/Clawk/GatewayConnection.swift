@@ -236,7 +236,7 @@ class GatewayConnection: NSObject, ObservableObject {
         }
 
         guard autoReconnectBlockedReason == nil else {
-            debugAppend("Reconnect blocked: \(autoReconnectBlockedReason ?? \"unknown\")")
+            debugAppend("Reconnect blocked: \(autoReconnectBlockedReason ?? "unknown")")
             return
         }
 
