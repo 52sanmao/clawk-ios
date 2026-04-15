@@ -94,7 +94,7 @@ struct HomeView: View {
                         Text(gateway.isConnecting ? "连接中..." : (gateway.isConnected ? "已连接" : "点击重新连接"))
                             .font(.headline)
                             .foregroundColor(.primary)
-                        Text(gateway.gatewayHost.hasPrefix("ws") ? gateway.gatewayHost : "\(gateway.gatewayHost):\(gateway.gatewayPort)")
+                        Text(displayGatewayAddress)
                             .font(.caption2)
                             .foregroundColor(.secondary)
                             .lineLimit(1)
@@ -133,6 +133,13 @@ struct HomeView: View {
     }
 
     // MARK: - Overview Stats
+
+    private var displayGatewayAddress: String {
+        let normalized = GatewayConnection.normalizeGatewayEndpoint(gateway.gatewayHost, fallbackPort: gateway.gatewayPort)
+        return normalized.host.hasPrefix("ws://") || normalized.host.hasPrefix("wss://")
+            ? normalized.host
+            : "\(normalized.host):\(normalized.port)"
+    }
 
     private var overviewSection: some View {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {

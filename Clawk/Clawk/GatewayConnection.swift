@@ -9,6 +9,34 @@ private let gatewayLog = Logger(subsystem: "com.kishparikh.clawk", category: "Ga
 /// Direct WebSocket connection to OpenClaw Gateway using Protocol v3
 /// Supports full RPC methods: chat, sessions, agents, cron, logs, approvals
 class GatewayConnection: NSObject, ObservableObject {
+    static func normalizeGatewayEndpoint(_ rawValue: String, fallbackPort: Int) -> (host: String, port: Int) {
+        let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return (rawValue, fallbackPort)
+        }
+
+        if let components = URLComponents(string: trimmed),
+           let scheme = components.scheme?.lowercased() {
+            if scheme == "ws" || scheme == "wss" {
+                return (trimmed, components.port ?? fallbackPort)
+            }
+
+            if scheme == "http" || scheme == "https" {
+                var normalized = components
+                normalized.scheme = scheme == "https" ? "wss" : "ws"
+                let resolvedPort = components.port ?? (scheme == "https" ? 443 : 80)
+                if normalized.path.isEmpty {
+                    normalized.path = "/"
+                }
+                if let urlString = normalized.string {
+                    return (urlString, resolvedPort)
+                }
+            }
+        }
+
+        return (trimmed, fallbackPort)
+    }
+
 
     // MARK: - Published State
 
@@ -63,6 +91,8 @@ class GatewayConnection: NSObject, ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var connectNonce: String?
     private var connectSent = false
+    private var autoReconnectBlockedReason: String?
+    private var shouldReconnectOnDisconnect = false
 
     // Configuration
     private(set) var gatewayHost: String
@@ -73,25 +103,16 @@ class GatewayConnection: NSObject, ObservableObject {
 
     // MARK: - Initialization
 
-    // The canonical gateway token — always use this, never trust cached values
-    static let defaultToken = "b3b6e49d493b3f0f8443575ebfd9fb1caaf103a5e333d106"
-
     init(host: String? = nil, port: Int? = nil, token: String? = nil) {
-        // Migrate ALL stale cached values (host, port, AND token)
         let cachedHost = UserDefaults.standard.string(forKey: "gatewayHost")
-        if cachedHost == "127.0.0.1" || cachedHost == "localhost" || cachedHost?.hasPrefix("wss://") == true {
+        if cachedHost == "127.0.0.1" || cachedHost == "localhost" {
             UserDefaults.standard.removeObject(forKey: "gatewayHost")
             UserDefaults.standard.removeObject(forKey: "gatewayPort")
-        }
-        // Always clear stale tokens — the hardcoded default is the source of truth
-        let cachedToken = UserDefaults.standard.string(forKey: "gatewayToken")
-        if cachedToken != nil && cachedToken != Self.defaultToken {
-            UserDefaults.standard.removeObject(forKey: "gatewayToken")
         }
 
         self.gatewayHost = host ?? UserDefaults.standard.string(forKey: "gatewayHost") ?? "100.96.61.83"
         self.gatewayPort = port ?? UserDefaults.standard.integer(forKey: "gatewayPort").nonZero ?? 18790
-        self.gatewayToken = token ?? UserDefaults.standard.string(forKey: "gatewayToken") ?? Self.defaultToken
+        self.gatewayToken = token ?? UserDefaults.standard.string(forKey: "gatewayToken") ?? ""
         self.deviceToken = UserDefaults.standard.string(forKey: "gatewayDeviceToken") ?? UUID().uuidString
         super.init()
 
@@ -122,6 +143,9 @@ class GatewayConnection: NSObject, ObservableObject {
             return
         }
 
+        autoReconnectBlockedReason = nil
+        shouldReconnectOnDisconnect = true
+
         DispatchQueue.main.async {
             self.isConnecting = true
             self.connectionError = nil
@@ -146,6 +170,14 @@ class GatewayConnection: NSObject, ObservableObject {
         var request = URLRequest(url: url)
         request.timeoutInterval = 15
 
+        let originScheme = url.scheme == "wss" ? "https" : "http"
+        if let host = url.host {
+            let port = url.port ?? (url.scheme == "wss" ? 443 : 80)
+            let origin = "\(originScheme)://\(host):\(port)"
+            request.setValue(origin, forHTTPHeaderField: "Origin")
+            debugAppend("Setting Origin header: \(origin)")
+        }
+
         let config = URLSessionConfiguration.default
         config.waitsForConnectivity = false  // Don't wait — fail fast so we can show error
         // Don't set httpAdditionalHeaders — URLSessionWebSocketTask handles upgrade internally
@@ -156,6 +188,7 @@ class GatewayConnection: NSObject, ObservableObject {
     }
 
     func disconnect() {
+        shouldReconnectOnDisconnect = false
         reconnectTimer?.invalidate()
         reconnectTimer = nil
         webSocketTask?.cancel(with: .normalClosure, reason: nil)
@@ -179,20 +212,35 @@ class GatewayConnection: NSObject, ObservableObject {
     }
 
     func updateConnection(host: String, port: Int, token: String = "") {
-        UserDefaults.standard.set(host, forKey: "gatewayHost")
-        UserDefaults.standard.set(port, forKey: "gatewayPort")
-        UserDefaults.standard.set(token, forKey: "gatewayToken")
+        let normalized = Self.normalizeGatewayEndpoint(host, fallbackPort: port)
+        let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        self.gatewayHost = host
-        self.gatewayPort = port
-        self.gatewayToken = token
+        autoReconnectBlockedReason = nil
+
+        UserDefaults.standard.set(normalized.host, forKey: "gatewayHost")
+        UserDefaults.standard.set(normalized.port, forKey: "gatewayPort")
+        UserDefaults.standard.set(trimmedToken, forKey: "gatewayToken")
+
+        self.gatewayHost = normalized.host
+        self.gatewayPort = normalized.port
+        self.gatewayToken = trimmedToken
 
         disconnect()
         connect()
     }
 
     private func reconnect() {
-        disconnect()
+        guard shouldReconnectOnDisconnect else {
+            debugAppend("Reconnect skipped: reconnect disabled")
+            return
+        }
+
+        guard autoReconnectBlockedReason == nil else {
+            debugAppend("Reconnect blocked: \(autoReconnectBlockedReason ?? \"unknown\")")
+            return
+        }
+
+        reconnectTimer?.invalidate()
         DispatchQueue.main.async { [weak self] in
             self?.reconnectTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { [weak self] _ in
                 self?.connect()
@@ -206,20 +254,95 @@ class GatewayConnection: NSObject, ObservableObject {
         UserDefaults.standard.set(self.deviceToken, forKey: "gatewayDeviceToken")
     }
 
+    private func clearStoredGatewayToken() {
+        UserDefaults.standard.removeObject(forKey: "gatewayToken")
+        self.gatewayToken = ""
+    }
+
+    private func isDeviceTokenIssue(_ message: String) -> Bool {
+        let normalized = message.lowercased()
+        return normalized.contains("device token") ||
+               normalized.contains("device not linked") ||
+               normalized.contains("not linked") ||
+               normalized.contains("not paired") ||
+               normalized.contains("missing scope")
+    }
+
+    private func shouldBlockAutoReconnect(for message: String) -> Bool {
+        let normalized = message.lowercased()
+        return normalized.contains("token missing") ||
+               normalized.contains("token invalid") ||
+               normalized.contains("unauthorized") ||
+               normalized.contains("origin not allowed") ||
+               normalized.contains("origin missing or invalid") ||
+               normalized.contains("invalid url") ||
+               normalized.contains("unsupported url")
+    }
+
+    private func handleHandshakeFailure(_ error: Error) {
+        let description = error.localizedDescription
+
+        if isDeviceTokenIssue(description) {
+            debugAppend("Clearing stored device token due to handshake failure: \(description)")
+            clearStoredDeviceToken()
+        }
+
+        if shouldBlockAutoReconnect(for: description) {
+            autoReconnectBlockedReason = description
+            shouldReconnectOnDisconnect = false
+            if description.lowercased().contains("token missing") ||
+                description.lowercased().contains("token invalid") ||
+                description.lowercased().contains("unauthorized") {
+                clearStoredGatewayToken()
+            }
+            debugAppend("Blocking auto reconnect after handshake failure: \(description)")
+        }
+
+        DispatchQueue.main.async {
+            self.connectionError = description
+            self.isConnected = false
+            self.isConnecting = false
+        }
+    }
+
+    private func handleTransportFailure(_ description: String) {
+        let normalized = description.lowercased()
+        if normalized.contains("cancelled") && !shouldReconnectOnDisconnect {
+            debugAppend("Ignoring cancellation after manual disconnect")
+            return
+        }
+
+        DispatchQueue.main.async {
+            self.isConnected = false
+            self.isConnecting = false
+            self.connectionError = description
+        }
+
+        if shouldBlockAutoReconnect(for: description) {
+            autoReconnectBlockedReason = description
+            shouldReconnectOnDisconnect = false
+            debugAppend("Blocking auto reconnect after transport failure: \(description)")
+            return
+        }
+
+        reconnect()
+    }
+
     // MARK: - Protocol v3 Handshake
 
     private func performHandshake() {
         guard !connectSent else { return }
         connectSent = true
 
+        let trimmedGatewayToken = gatewayToken.trimmingCharacters(in: .whitespacesAndNewlines)
         let savedDeviceToken = UserDefaults.standard.string(forKey: "gatewayDeviceToken")?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let authToken = (savedDeviceToken?.isEmpty == false) ? savedDeviceToken! : gatewayToken
+        let authToken = trimmedGatewayToken.isEmpty ? (savedDeviceToken ?? "") : trimmedGatewayToken
 
         var params: [String: Any] = [
             "minProtocol": 3,
             "maxProtocol": 3,
             "client": [
-                "id": "cli",
+                "id": "openclaw-ios",
                 "displayName": "Clawk iOS",
                 "version": "2.0",
                 "platform": "ios",
@@ -264,12 +387,7 @@ class GatewayConnection: NSObject, ObservableObject {
 
                 case .failure(let error):
                     print("[Gateway] Connect failed: \(error)")
-                    let description = error.localizedDescription
-                    if description.contains("missing scope: operator.read") {
-                        self?.clearStoredDeviceToken()
-                    }
-                    self?.connectionError = description
-                    self?.isConnecting = false
+                    self?.handleHandshakeFailure(error)
                 }
             }
         }
@@ -412,12 +530,7 @@ class GatewayConnection: NSObject, ObservableObject {
                 self?.receiveMessage()
             case .failure(let error):
                 print("[Gateway] Receive error: \(error)")
-                DispatchQueue.main.async {
-                    self?.connectionError = error.localizedDescription
-                    self?.isConnected = false
-                    self?.isConnecting = false
-                }
-                self?.reconnect()
+                self?.handleTransportFailure(error.localizedDescription)
             }
         }
     }
@@ -1297,18 +1410,16 @@ extension GatewayConnection: URLSessionWebSocketDelegate {
             let nsError = error as NSError
             errorDesc = "\(nsError.localizedDescription) (code: \(nsError.code), domain: \(nsError.domain))"
             debugAppend("Connection error: \(errorDesc)")
+            handleTransportFailure(errorDesc)
         } else {
             errorDesc = "Connection closed"
             debugAppend("Connection closed normally")
-        }
-        DispatchQueue.main.async {
-            self.isConnected = false
-            self.isConnecting = false
-            if let error = error {
-                self.connectionError = errorDesc
+            DispatchQueue.main.async {
+                self.isConnected = false
+                self.isConnecting = false
             }
+            reconnect()
         }
-        reconnect()
     }
 }
 

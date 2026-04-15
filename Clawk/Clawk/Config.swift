@@ -2,25 +2,24 @@ import Foundation
 import SwiftUI
 
 enum Config {
-    // Local development backend
-    static let baseURL = "http://localhost:3002"
-    
-    // Or for Railway deployment:
-    // static let baseURL = "https://your-app.railway.app"
-    
+    // Legacy relay backend kept separate from the primary OpenClaw gateway connection.
+    static let relayBaseURL = UserDefaults.standard.string(forKey: "relayBaseURL") ?? "http://localhost:3002"
+
+    static var baseURL: String { relayBaseURL }
+
     static var websocketURL: URL {
-        var components = URLComponents(string: baseURL)!
+        var components = URLComponents(string: relayBaseURL)!
         components.scheme = components.scheme == "https" ? "wss" : "ws"
         components.path = "/"
         components.queryItems = [URLQueryItem(name: "token", value: deviceToken)]
         return components.url!
     }
-    
+
     static var apiURL: URL {
-        URL(string: baseURL)!
+        URL(string: relayBaseURL)!
     }
-    
-    // Generate once and store in Keychain (simplified here)
+
+    // Generate once and store in UserDefaults for the legacy relay channel.
     static let deviceToken = UserDefaults.standard.string(forKey: "deviceToken") ?? {
         let token = UUID().uuidString
         UserDefaults.standard.set(token, forKey: "deviceToken")

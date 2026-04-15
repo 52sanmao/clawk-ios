@@ -8,6 +8,8 @@ enum GatewayError: Error, LocalizedError {
     case notLinked
     case notPaired
     case agentTimeout
+    case tokenMissing
+    case originNotAllowed
     case invalidRequest(String)
     case unavailable(retryAfterMs: Int?)
     case serverError(code: String, message: String)
@@ -20,6 +22,8 @@ enum GatewayError: Error, LocalizedError {
         case .notLinked: return "客户端未认证"
         case .notPaired: return "需要设备配对"
         case .agentTimeout: return "代理执行超时"
+        case .tokenMissing: return "缺少网关令牌或令牌无效"
+        case .originNotAllowed: return "当前地址来源未被网关允许，请检查网关地址与路径前缀是否正确"
         case .invalidRequest(let msg): return "无效请求: \(msg)"
         case .unavailable(let retry): return "网关不可用\(retry.map { "，\($0)ms后重试" } ?? "")"
         case .serverError(_, let msg): return msg
@@ -29,13 +33,26 @@ enum GatewayError: Error, LocalizedError {
     }
 
     static func from(code: String, message: String) -> GatewayError {
+        let lowercasedMessage = message.lowercased()
         switch code {
-        case "NOT_LINKED": return .notLinked
-        case "NOT_PAIRED": return .notPaired
-        case "AGENT_TIMEOUT": return .agentTimeout
-        case "INVALID_REQUEST": return .invalidRequest(message)
-        case "UNAVAILABLE": return .unavailable(retryAfterMs: nil)
-        default: return .serverError(code: code, message: message)
+        case "NOT_LINKED":
+            return .notLinked
+        case "NOT_PAIRED":
+            return .notPaired
+        case "AGENT_TIMEOUT":
+            return .agentTimeout
+        case "INVALID_REQUEST":
+            if lowercasedMessage.contains("token missing") || lowercasedMessage.contains("token invalid") || lowercasedMessage.contains("unauthorized") {
+                return .tokenMissing
+            }
+            if lowercasedMessage.contains("origin not allowed") || lowercasedMessage.contains("origin missing or invalid") {
+                return .originNotAllowed
+            }
+            return .invalidRequest(message)
+        case "UNAVAILABLE":
+            return .unavailable(retryAfterMs: nil)
+        default:
+            return .serverError(code: code, message: message)
         }
     }
 }

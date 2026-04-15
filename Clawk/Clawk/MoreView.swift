@@ -279,6 +279,10 @@ struct SettingsFormContent: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
 
+                Text("Supports ws://, wss://, or control URLs like http://host:port/path and preserves path prefixes.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+
                 TextField("Port", text: $gatewayPort)
                     .keyboardType(.numberPad)
 
@@ -467,7 +471,10 @@ struct SettingsFormContent: View {
 
     private func applyGatewaySettings() {
         let port = Int(gatewayPort) ?? 18789
-        gateway.updateConnection(host: gatewayHost, port: port, token: gatewayToken)
+        let normalized = GatewayConnection.normalizeGatewayEndpoint(gatewayHost, fallbackPort: port)
+        gatewayHost = normalized.host
+        gatewayPort = "\(normalized.port)"
+        gateway.updateConnection(host: normalized.host, port: normalized.port, token: gatewayToken)
     }
 
     private func applyDashboardSettings() {
@@ -489,11 +496,9 @@ struct SettingsFormContent: View {
                 let config = try await dashboardAPI.fetchGatewayConfig()
                 await MainActor.run {
                     if let url = config.url {
-                        if let components = URLComponents(string: url) {
-                            gatewayHost = components.host ?? gatewayHost
-                            if let port = components.port {
-                                gatewayPort = "\(port)"
-                            }
+                        gatewayHost = url
+                        if let port = URLComponents(string: url)?.port {
+                            gatewayPort = "\(port)"
                         }
                     }
                     if let token = config.token {

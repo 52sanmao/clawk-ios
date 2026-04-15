@@ -245,6 +245,7 @@ class MessageStore: NSObject, ObservableObject {
     
     override init() {
         super.init()
+        log("Relay channel uses \(Config.baseURL) and is optional for push notifications/action cards")
         connect()
         pairDevice()
     }
