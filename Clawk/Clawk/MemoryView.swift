@@ -162,18 +162,18 @@ struct MemoryFileDetailView: View {
                 // Footer
                 HStack {
                     if let mtime = mtime {
-                        Text("Modified: \(formatMtime(mtime))")
+                        Text("修改时间：\(formatMtime(mtime))")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
                     Spacer()
                     if hasChanges {
-                        Text("Unsaved changes")
+                        Text("有未保存更改")
                             .font(.caption2)
                             .foregroundColor(.orange)
                     }
                     if saveSuccess {
-                        Text("Saved")
+                        Text("已保存")
                             .font(.caption2)
                             .foregroundColor(.green)
                     }
@@ -186,7 +186,7 @@ struct MemoryFileDetailView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarLeading) {
-                    Button("Done") { dismiss() }
+                    Button("完成") { dismiss() }
                 }
                 ToolbarItem(placement: .navigationBarTrailing) {
                     HStack {
@@ -196,13 +196,13 @@ struct MemoryFileDetailView: View {
                                     ProgressView()
                                         .scaleEffect(0.7)
                                 } else {
-                                    Text("Save")
+                                    Text("保存")
                                         .fontWeight(.medium)
                                 }
                             }
                             .disabled(isSaving)
                         }
-                        Button(isEditing ? "View" : "Edit") {
+                        Button(isEditing ? "查看" : "编辑") {
                             isEditing.toggle()
                         }
                     }

@@ -17,28 +17,28 @@ struct LiveOverviewTab: View {
             // Stats Cards
             LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
                 StatCard(
-                    title: "Agents",
+                    title: "代理",
                     value: "\(gateway.agents.count)",
                     icon: "person.2.fill",
                     color: .green
                 )
 
                 StatCard(
-                    title: "Cron Jobs",
+                    title: "定时任务",
                     value: "\(gateway.cronJobs.count)",
                     icon: "clock.arrow.circlepath",
                     color: .purple
                 )
 
                 StatCard(
-                    title: "Sessions",
+                    title: "会话",
                     value: "\(sessionCount)",
                     icon: "bubble.left.and.bubble.right.fill",
                     color: .blue
                 )
 
                 StatCard(
-                    title: costPreferences.appliesSubscriptionCoverage ? "Billed Cost" : "Total Cost",
+                    title: costPreferences.appliesSubscriptionCoverage ? "实际计费成本" : "总成本",
                     value: costString,
                     icon: "dollarsign.circle.fill",
                     color: .orange
@@ -50,7 +50,7 @@ struct LiveOverviewTab: View {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill")
                         .foregroundColor(.orange)
-                    Text("\(gateway.pendingApprovals.count) pending approval\(gateway.pendingApprovals.count == 1 ? "" : "s")")
+                    Text("\(gateway.pendingApprovals.count) 个待处理审批")
                         .font(.subheadline)
                     Spacer()
                 }
@@ -62,9 +62,9 @@ struct LiveOverviewTab: View {
             // Token usage summary
             if let tokens = costData?.tokensUsed {
                 HStack(spacing: 16) {
-                    TokenMini(label: "Input", value: tokens.input ?? 0, color: .blue)
-                    TokenMini(label: "Output", value: tokens.output ?? 0, color: .green)
-                    TokenMini(label: "Cached", value: tokens.cached ?? 0, color: .orange)
+                    TokenMini(label: "输入", value: tokens.input ?? 0, color: .blue)
+                    TokenMini(label: "输出", value: tokens.output ?? 0, color: .green)
+                    TokenMini(label: "缓存", value: tokens.cached ?? 0, color: .orange)
                 }
                 .padding()
                 .background(Color(.secondarySystemBackground))
@@ -74,7 +74,7 @@ struct LiveOverviewTab: View {
             // Active agents
             if !gateway.agents.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Agents")
+                    Text("代理")
                         .font(.headline)
                     ForEach(gateway.agents) { agent in
                         HStack(spacing: 8) {
@@ -158,7 +158,7 @@ struct LiveAgentsTab: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if gateway.agents.isEmpty {
-                EmptyStateView(icon: "person.2.slash", message: "No agents found")
+                EmptyStateView(icon: "person.2.slash", message: "未找到代理")
             } else {
                 ForEach(gateway.agents) { agent in
                     LiveAgentCard(agent: agent)
@@ -191,7 +191,7 @@ struct LiveAgentCard: View {
                             .foregroundColor(.blue)
                     }
                     if let skills = agent.skills, !skills.isEmpty {
-                        Text("\(skills.count) skills")
+                        Text("\(skills.count) 个技能")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
@@ -245,14 +245,14 @@ struct LiveSessionsTab: View {
     var body: some View {
         VStack(spacing: 0) {
             if isLoading {
-                ProgressView("Loading sessions...")
+                ProgressView("正在加载会话...")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if allSessions.isEmpty {
-                EmptyStateView(icon: "bubble.left.and.bubble.right.slash", message: "No sessions found")
+                EmptyStateView(icon: "bubble.left.and.bubble.right.slash", message: "未找到会话")
             } else {
                 // Stats header
                 HStack(spacing: 16) {
-                    StatBadge(count: allSessions.count, label: "Total", color: .blue)
+                    StatBadge(count: allSessions.count, label: "总数", color: .blue)
                     Spacer()
                 }
                 .padding()

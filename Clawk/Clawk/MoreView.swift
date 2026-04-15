@@ -27,7 +27,7 @@ struct MoreView: View {
                             Image(systemName: "brain.head.profile")
                                 .font(.title)
                                 .foregroundColor(.secondary)
-                            Text("Not connected")
+                            Text("未连接")
                                 .foregroundColor(.secondary)
                         }
                         Spacer()
@@ -36,7 +36,7 @@ struct MoreView: View {
                                 Circle()
                                     .fill(gateway.isConnected ? Color.green : Color.red)
                                     .frame(width: 8, height: 8)
-                                Text(gateway.isConnected ? "Gateway" : "Offline")
+                                Text(gateway.isConnected ? "网关在线" : "离线")
                                     .font(.caption2)
                                     .foregroundColor(.secondary)
                             }
@@ -54,17 +54,17 @@ struct MoreView: View {
                 }
 
                 // Agents & Sessions
-                Section("Agents & Sessions") {
+                Section("代理与会话") {
                     NavigationLink {
                         ScrollView {
                             LiveAgentsTab(gateway: gateway)
                                 .padding()
                         }
-                        .navigationTitle("Agents")
+                        .navigationTitle("代理")
                     } label: {
                         Label {
                             HStack {
-                                Text("Agents")
+                                Text("代理")
                                 Spacer()
                                 Text("\(gateway.agents.count)")
                                     .font(.caption)
@@ -78,19 +78,19 @@ struct MoreView: View {
 
                     NavigationLink {
                         LiveSessionsTab(gateway: gateway, dashboardAPI: dashboardAPI)
-                            .navigationTitle("Sessions")
+                            .navigationTitle("会话")
                     } label: {
-                        Label("Sessions", systemImage: "bubble.left.and.bubble.right")
+                        Label("会话", systemImage: "bubble.left.and.bubble.right")
                             .foregroundColor(.primary)
                     }
 
                     NavigationLink {
                         ApprovalQueueView(gateway: gateway)
-                            .navigationTitle("Approvals")
+                            .navigationTitle("审批")
                     } label: {
                         Label {
                             HStack {
-                                Text("Approvals")
+                                Text("审批")
                                 Spacer()
                                 if gateway.pendingApprovals.count > 0 {
                                     Text("\(gateway.pendingApprovals.count)")
@@ -111,40 +111,40 @@ struct MoreView: View {
                 }
 
                 // Analytics
-                Section("Analytics") {
+                Section("分析") {
                     NavigationLink {
                         CostsView(dashboardAPI: dashboardAPI)
-                            .navigationTitle("Costs")
+                            .navigationTitle("成本")
                     } label: {
-                        Label("Costs", systemImage: "dollarsign.circle.fill")
+                        Label("成本", systemImage: "dollarsign.circle.fill")
                             .foregroundColor(.primary)
                     }
 
                     NavigationLink {
                         AgentLogsView(gateway: gateway)
-                            .navigationTitle("Logs")
+                            .navigationTitle("日志")
                     } label: {
-                        Label("Logs", systemImage: "doc.text.magnifyingglass")
+                        Label("日志", systemImage: "doc.text.magnifyingglass")
                             .foregroundColor(.primary)
                     }
                 }
 
                 // System
-                Section("System") {
+                Section("系统") {
                     NavigationLink {
                         RelayMessagesView()
                             .environmentObject(messageStore)
-                            .navigationTitle("Action Cards")
+                            .navigationTitle("操作卡片")
                     } label: {
-                        Label("Action Cards", systemImage: "bell.badge.fill")
+                        Label("操作卡片", systemImage: "bell.badge.fill")
                             .foregroundColor(.primary)
                     }
 
                     NavigationLink {
                         GatewayDebugLogContent(gateway: gateway)
-                            .navigationTitle("Debug Log")
+                            .navigationTitle("调试日志")
                     } label: {
-                        Label("Debug Log", systemImage: "ant.fill")
+                        Label("调试日志", systemImage: "ant.fill")
                             .foregroundColor(.primary)
                     }
 
@@ -154,14 +154,14 @@ struct MoreView: View {
                             dashboardAPI: dashboardAPI,
                             messageStore: messageStore
                         )
-                        .navigationTitle("Settings")
+                        .navigationTitle("设置")
                     } label: {
-                        Label("Settings", systemImage: "gear")
+                        Label("设置", systemImage: "gear")
                             .foregroundColor(.primary)
                     }
                 }
             }
-            .navigationTitle("More")
+            .navigationTitle("更多")
         }
     }
 }
@@ -234,7 +234,7 @@ struct GatewayDebugLogContent: View {
         }
         .toolbar {
             ToolbarItem(placement: .navigationBarTrailing) {
-                Button("Clear") {
+                Button("清除") {
                     gateway.debugLog.removeAll()
                 }
             }
@@ -275,29 +275,29 @@ struct SettingsFormContent: View {
         Form {
             // Gateway connection
             Section {
-                TextField("Host", text: $gatewayHost)
+                TextField("主机 / WebSocket 地址", text: $gatewayHost)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
 
-                Text("Supports ws://, wss://, or control URLs like http://host:port/path and preserves path prefixes.")
+                Text("支持 ws://、wss://，也支持 http://host:port/path 这类控制台地址，并会保留路径前缀。")
                     .font(.caption)
                     .foregroundColor(.secondary)
 
-                TextField("Port", text: $gatewayPort)
+                TextField("端口", text: $gatewayPort)
                     .keyboardType(.numberPad)
 
-                SecureField("Token (optional)", text: $gatewayToken)
+                SecureField("令牌（可选）", text: $gatewayToken)
                     .textInputAutocapitalization(.never)
 
                 HStack {
                     Circle()
                         .fill(gateway.isConnected ? Color.green : (gateway.isConnecting ? Color.orange : Color.red))
                         .frame(width: 8, height: 8)
-                    Text(gateway.isConnected ? "Connected" : (gateway.isConnecting ? "Connecting..." : "Disconnected"))
+                    Text(gateway.isConnected ? "已连接" : (gateway.isConnecting ? "连接中..." : "未连接"))
                         .font(.caption)
                         .foregroundColor(.secondary)
                     Spacer()
-                    Button(gateway.isConnected ? "Disconnect" : "Connect") {
+                    Button(gateway.isConnected ? "断开" : "连接") {
                         if gateway.isConnected {
                             gateway.disconnect()
                         } else {
@@ -313,14 +313,14 @@ struct SettingsFormContent: View {
                         .foregroundColor(.red)
                 }
             } header: {
-                Text("Gateway (OpenClaw)")
+                Text("网关（OpenClaw）")
             } footer: {
-                Text("Direct WebSocket connection to OpenClaw Gateway (Protocol v3)")
+                Text("直接连接 OpenClaw Gateway 的 WebSocket 主通道（协议 v3）。")
             }
 
             // Dashboard connection
             Section {
-                TextField("Dashboard URL", text: $dashboardURL)
+                TextField("Dashboard 地址", text: $dashboardURL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
 
@@ -328,11 +328,11 @@ struct SettingsFormContent: View {
                     Circle()
                         .fill(dashboardAPI.isReachable ? Color.green : Color.red)
                         .frame(width: 8, height: 8)
-                    Text(dashboardAPI.isReachable ? "Reachable" : "Unreachable")
+                    Text(dashboardAPI.isReachable ? "可访问" : "不可访问")
                         .font(.caption)
                         .foregroundColor(.secondary)
                     Spacer()
-                    Button("Test") {
+                    Button("测试") {
                         applyDashboardSettings()
                         Task { await dashboardAPI.checkHealth() }
                     }
@@ -347,36 +347,36 @@ struct SettingsFormContent: View {
             } header: {
                 Text("Dashboard")
             } footer: {
-                Text("Direct HTTP connection to kishos-dashboard for supplementary data")
+                Text("通过 HTTP 连接 kishos-dashboard，用于获取补充数据和自动发现配置。")
             }
 
             Section {
-                Picker("Display Mode", selection: $costDisplayModeRaw) {
+                Picker("显示模式", selection: $costDisplayModeRaw) {
                     ForEach(CostDisplayMode.allCases) { mode in
                         Text(mode.label).tag(mode.rawValue)
                     }
                 }
 
-                Toggle("OpenAI subscription covers GPT/o-series", isOn: $openAISubscription)
+                Toggle("OpenAI 订阅覆盖 GPT / o 系列", isOn: $openAISubscription)
                     .disabled(costDisplayMode != .effectiveBilled)
 
-                Toggle("Anthropic subscription covers Claude", isOn: $anthropicSubscription)
+                Toggle("Anthropic 订阅覆盖 Claude", isOn: $anthropicSubscription)
                     .disabled(costDisplayMode != .effectiveBilled)
 
                 if costPreferences.appliesSubscriptionCoverage {
-                    Text("Covered providers will show as billed cost 0 or Included when the model name matches.")
+                    Text("当模型名称匹配时，已被订阅覆盖的提供商会显示为计费成本 0 或“已包含”。")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
             } header: {
-                Text("Cost Display")
+                Text("成本显示")
             } footer: {
-                Text("The dashboard does not report whether usage came from an API key or a subscription seat. These settings apply a local display override based on detected model/provider names.")
+                Text("Dashboard 无法区分流量来自 API key 还是订阅席位，这里会根据识别到的模型 / 提供商名称做本地显示修正。")
             }
 
             // Relay server (optional)
             Section {
-                TextField("Relay URL", text: $relayURL)
+                TextField("Relay 地址", text: $relayURL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
 
@@ -384,14 +384,14 @@ struct SettingsFormContent: View {
                     Circle()
                         .fill(messageStore.isConnected ? Color.green : Color.red)
                         .frame(width: 8, height: 8)
-                    Text(messageStore.isConnected ? "Connected" : "Disconnected")
+                    Text(messageStore.isConnected ? "已连接" : "未连接")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
             } header: {
-                Text("Relay Server (Optional)")
+                Text("Relay 服务（可选）")
             } footer: {
-                Text("For push notifications and action cards. Not required for core functionality.")
+                Text("用于推送通知和操作卡片，不影响核心聊天功能。")
             }
 
             // Auto-discover
@@ -402,7 +402,7 @@ struct SettingsFormContent: View {
                             ProgressView()
                                 .scaleEffect(0.7)
                         }
-                        Text("Auto-Discover from Dashboard")
+                        Text("从 Dashboard 自动发现")
                     }
                 }
                 .disabled(isAutoDiscovering || dashboardURL.isEmpty)
@@ -413,13 +413,13 @@ struct SettingsFormContent: View {
                         .foregroundColor(.green)
                 }
             } header: {
-                Text("Setup")
+                Text("配置")
             } footer: {
-                Text("Fetches gateway URL and token from the dashboard's /api/gateway-config endpoint")
+                Text("从 Dashboard 的 /api/gateway-config 接口拉取网关地址和令牌。")
             }
 
             // Agent identity
-            Section("Agent Identity") {
+            Section("代理身份") {
                 if let identity = gateway.agentIdentity {
                     HStack {
                         Text(identity.emoji)
@@ -433,27 +433,27 @@ struct SettingsFormContent: View {
                         }
                     }
                 } else {
-                    Text("Not connected")
+                    Text("未连接")
                         .foregroundColor(.secondary)
                 }
             }
 
             // Device info
-            Section("Device") {
-                DetailRow(label: "Device Token", value: String(gateway.publicDeviceToken.prefix(12)) + "...")
-                DetailRow(label: "Gateway Status", value: gateway.gatewayStatus?.version ?? "—")
+            Section("设备") {
+                DetailRow(label: "设备令牌", value: String(gateway.publicDeviceToken.prefix(12)) + "...")
+                DetailRow(label: "网关状态", value: gateway.gatewayStatus?.version ?? "—")
                 if let uptime = gateway.gatewayStatus?.uptime {
-                    DetailRow(label: "Uptime", value: formatUptime(uptime))
+                    DetailRow(label: "运行时长", value: formatUptime(uptime))
                 }
             }
 
             // Data management
             Section {
-                Button("Clear Chat History", role: .destructive) {
+                Button("清除聊天记录", role: .destructive) {
                     gateway.clearMessages()
                 }
 
-                Button("Apply All Settings") {
+                Button("应用全部设置") {
                     applyAllSettings()
                 }
             }
@@ -504,12 +504,12 @@ struct SettingsFormContent: View {
                     if let token = config.token {
                         gatewayToken = token
                     }
-                    autoDiscoverResult = "Found gateway config"
+                    autoDiscoverResult = "已获取到网关配置"
                     isAutoDiscovering = false
                 }
             } catch {
                 await MainActor.run {
-                    autoDiscoverResult = "Failed: \(error.localizedDescription)"
+                    autoDiscoverResult = "获取失败：\(error.localizedDescription)"
                     isAutoDiscovering = false
                 }
             }
@@ -520,9 +520,9 @@ struct SettingsFormContent: View {
         let hours = Int(seconds) / 3600
         let minutes = (Int(seconds) % 3600) / 60
         if hours > 0 {
-            return "\(hours)h \(minutes)m"
+            return "\(hours)小时 \(minutes)分钟"
         }
-        return "\(minutes)m"
+        return "\(minutes)分钟"
     }
 
     private var costDisplayMode: CostDisplayMode {

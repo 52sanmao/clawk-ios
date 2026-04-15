@@ -31,29 +31,29 @@ struct SessionChatView: View {
                 // Action buttons
                 HStack(spacing: 16) {
                     Button(action: { copySessionId() }) {
-                        Label("Copy ID", systemImage: "doc.on.doc")
+                        Label("复制 ID", systemImage: "doc.on.doc")
                     }
                     .buttonStyle(.bordered)
 
                     Button(action: { refreshMessages() }) {
-                        Label("Refresh", systemImage: "arrow.clockwise")
+                        Label("刷新", systemImage: "arrow.clockwise")
                     }
                     .buttonStyle(.bordered)
                 }
                 .padding()
             }
-            .navigationTitle("Session Chat")
+            .navigationTitle("会话聊天")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") { dismiss() }
+                    Button("完成") { dismiss() }
                 }
             }
             .onAppear {
                 refreshMessages()
             }
-            .alert("Session ID Copied", isPresented: $showingCopiedAlert) {
-                Button("OK", role: .cancel) {}
+            .alert("会话 ID 已复制", isPresented: $showingCopiedAlert) {
+                Button("确定", role: .cancel) {}
             }
         }
     }
@@ -92,7 +92,7 @@ struct SessionHeader: View {
                     .font(.largeTitle)
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(session.agentName ?? session.agentId ?? "Unknown Agent")
+                    Text(session.agentName ?? session.agentId ?? "未知代理")
                         .font(.headline)
 
                     if let model = session.model {
@@ -123,7 +123,7 @@ struct SessionHeader: View {
             }
 
             if let startedAt = session.startedAt {
-                Label("Started: \(timeAgo(from: startedAt))", systemImage: "clock")
+                Label("开始于：\(timeAgo(from: startedAt))", systemImage: "clock")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
@@ -225,7 +225,7 @@ struct SessionMessageBubble: View {
                     HStack {
                         Image(systemName: "wrench.fill")
                             .font(.caption2)
-                        Text("\(toolCalls.count) tool call\(toolCalls.count == 1 ? "" : "s")")
+                        Text("\(toolCalls.count) 次工具调用")
                             .font(.caption2)
                     }
                     .foregroundColor(.orange)
@@ -280,7 +280,7 @@ struct EnhancedSessionRow: View {
                         .font(.title3)
 
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(session.agentName ?? session.agentId ?? "Unknown")
+                        Text(session.agentName ?? session.agentId ?? "未知")
                             .font(.subheadline)
                             .fontWeight(.medium)
 
@@ -347,7 +347,7 @@ struct EnhancedSessionRow: View {
         }
         .contextMenu {
             Button(action: { copySessionId() }) {
-                Label("Copy Session ID", systemImage: "doc.on.doc")
+                Label("复制会话 ID", systemImage: "doc.on.doc")
             }
 
             if let agentId = session.agentId {
@@ -358,12 +358,12 @@ struct EnhancedSessionRow: View {
 
             if let path = session.projectPath {
                 Button(action: { UIPasteboard.general.string = path }) {
-                    Label("Copy Project Path", systemImage: "folder")
+                    Label("复制项目路径", systemImage: "folder")
                 }
             }
         }
-        .alert("Copied!", isPresented: $showingCopiedAlert) {
-            Button("OK", role: .cancel) {}
+        .alert("已复制", isPresented: $showingCopiedAlert) {
+            Button("确定", role: .cancel) {}
         }
     }
 

@@ -279,6 +279,31 @@ class GatewayConnection: NSObject, ObservableObject {
                normalized.contains("unsupported url")
     }
 
+    private func userFacingErrorMessage(_ message: String) -> String {
+        let normalized = message.lowercased()
+
+        if normalized.contains("missing scope: operator.write") {
+            return "当前令牌没有发送消息权限（缺少 operator.write）。请更换具有写权限的网关令牌，或重新配对设备。"
+        }
+        if normalized.contains("missing scope: operator.read") {
+            return "当前令牌只有部分权限，缺少读取权限（operator.read）。请更换完整权限的网关令牌，或重新配对设备。"
+        }
+        if normalized.contains("token missing") || normalized.contains("token invalid") || normalized.contains("unauthorized") {
+            return "网关令牌缺失、无效，或当前设备未被授权。请检查令牌后重试。"
+        }
+        if normalized.contains("origin not allowed") || normalized.contains("origin missing or invalid") {
+            return "当前地址来源未被网关允许。请检查网关地址、协议和路径前缀是否正确。"
+        }
+        if normalized.contains("device token") || normalized.contains("not linked") || normalized.contains("not paired") {
+            return "当前设备令牌已失效或尚未配对，请重新配对或改用有效的网关令牌。"
+        }
+        if normalized.contains("invalid url") || normalized.contains("unsupported url") {
+            return "网关地址格式无效。请填写正确的 ws://、wss:// 或控制台 URL。"
+        }
+
+        return message
+    }
+
     private func handleHandshakeFailure(_ error: Error) {
         let description = error.localizedDescription
 
@@ -299,7 +324,7 @@ class GatewayConnection: NSObject, ObservableObject {
         }
 
         DispatchQueue.main.async {
-            self.connectionError = description
+            self.connectionError = self.userFacingErrorMessage(description)
             self.isConnected = false
             self.isConnecting = false
         }
@@ -315,7 +340,7 @@ class GatewayConnection: NSObject, ObservableObject {
         DispatchQueue.main.async {
             self.isConnected = false
             self.isConnecting = false
-            self.connectionError = description
+            self.connectionError = self.userFacingErrorMessage(description)
         }
 
         if shouldBlockAutoReconnect(for: description) {
@@ -881,10 +906,11 @@ class GatewayConnection: NSObject, ObservableObject {
         case "error":
             // Error response
             let errorMsg = payload["errorMessage"] as? String ?? "代理错误"
+            let userMessage = userFacingErrorMessage(errorMsg)
             debugAppend("chat error: \(errorMsg)")
             isWaitingForResponse = false
             chatStatus = nil
-            chatError = errorMsg
+            chatError = userMessage
             cancelResponseTimeout()
 
         default:
@@ -1123,7 +1149,7 @@ class GatewayConnection: NSObject, ObservableObject {
                             self.isWaitingForResponse = false
                             self.cancelResponseTimeout()
                             self.chatStatus = nil
-                            self.chatError = "发送失败: \(error.localizedDescription)"
+                            self.chatError = "发送失败：\(self.userFacingErrorMessage(error.localizedDescription))"
                         }
                     }
                 }

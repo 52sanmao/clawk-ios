@@ -338,14 +338,14 @@ struct ToolCallDetailView: View {
     var body: some View {
         NavigationView {
             List {
-                Section("Tool") {
+                Section("工具") {
                     Text(toolCall.name)
                         .font(.headline)
                 }
 
-                Section("Arguments") {
+                Section("参数") {
                     if toolCall.arguments.isEmpty {
-                        Text("No arguments")
+                        Text("无参数")
                             .foregroundColor(.secondary)
                     } else {
                         ForEach(Array(toolCall.arguments.keys.sorted()), id: \.self) { key in
@@ -363,16 +363,16 @@ struct ToolCallDetailView: View {
                     }
                 }
 
-                Section("Timestamp") {
+                Section("时间") {
                     Text(toolCall.timestamp, style: .date)
                     Text(toolCall.timestamp, style: .time)
                 }
             }
-            .navigationTitle("Tool Call")
+            .navigationTitle("工具调用")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") { dismiss() }
+                    Button("完成") { dismiss() }
                 }
             }
         }
