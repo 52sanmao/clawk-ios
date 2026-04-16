@@ -223,8 +223,8 @@ class MessageStore: NSObject, ObservableObject {
     var debugLogExportSection: String {
         let lines: [String] = [
             "模块: Relay / Dashboard 推送",
-            "Relay Base URL: \(Config.baseURL)",
-            "WebSocket URL: \(Config.websocketURL.absoluteString)",
+            "Relay Base URL: \(Config.baseURL.isEmpty ? "<disabled>" : Config.baseURL)",
+            "WebSocket URL: \(Config.websocketURL?.absoluteString ?? "<disabled>")",
             "已连接: \(isConnected ? "是" : "否")",
             "连接中: \(isConnecting ? "是" : "否")",
             "Dashboard 推送在线: \(dashboardConnected ? "是" : "否")",
@@ -333,15 +333,15 @@ class MessageStore: NSObject, ObservableObject {
     }
 
     private func noteConnectAttempt() {
-        log("Connecting to \(Config.websocketURL)...")
+        log("Connecting to \(Config.websocketURL?.absoluteString ?? "<disabled>")...")
     }
 
     private func notePollingAttempt() {
-        log("Polling relay messages from \(Config.apiURL.appendingPathComponent("/poll"))")
+        log("Polling relay messages from \(Config.apiURL?.appendingPathComponent("/poll").absoluteString ?? "<disabled>")")
     }
 
     private func notePairingAttempt() {
-        log("Registering relay device at \(Config.apiURL.appendingPathComponent("/pair"))")
+        log("Registering relay device at \(Config.apiURL?.appendingPathComponent("/pair").absoluteString ?? "<disabled>")")
     }
 
     private func noteSessionMessageFetch(_ sessionId: String) {
@@ -743,23 +743,23 @@ class MessageStore: NSObject, ObservableObject {
     }
 
     private func noteWSURL() {
-        log("Relay websocket URL \(Config.websocketURL)")
+        log("Relay websocket URL \(Config.websocketURL?.absoluteString ?? "<disabled>")")
     }
 
     private func notePollURL() {
-        log("Relay poll URL \(Config.apiURL.appendingPathComponent("/poll"))")
+        log("Relay poll URL \(Config.apiURL?.appendingPathComponent("/poll").absoluteString ?? "<disabled>")")
     }
 
     private func notePairURL() {
-        log("Relay pair URL \(Config.apiURL.appendingPathComponent("/pair"))")
+        log("Relay pair URL \(Config.apiURL?.appendingPathComponent("/pair").absoluteString ?? "<disabled>")")
     }
 
     private func noteMessageURL() {
-        log("Relay message URL \(Config.apiURL.appendingPathComponent("/message"))")
+        log("Relay message URL \(Config.apiURL?.appendingPathComponent("/message").absoluteString ?? "<disabled>")")
     }
 
     private func noteSessionURL(_ sessionId: String) {
-        log("Relay session URL \(Config.apiURL.appendingPathComponent("/dashboard/sessions/\(sessionId)/messages"))")
+        log("Relay session URL \(Config.apiURL?.appendingPathComponent("/dashboard/sessions/\(sessionId)/messages").absoluteString ?? "<disabled>")")
     }
 
     private func noteOpenState() {
@@ -810,7 +810,10 @@ class MessageStore: NSObject, ObservableObject {
             return
         }
 
-        let url = Config.apiURL.appendingPathComponent("/pair")
+        guard let url = Config.apiURL?.appendingPathComponent("/pair") else {
+            log("Skipped relay pairing because relay URL is unavailable")
+            return
+        }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -868,7 +871,17 @@ class MessageStore: NSObject, ObservableObject {
         noteConnectAttempt()
         noteOpenState()
 
-        var request = URLRequest(url: Config.websocketURL)
+        guard let websocketURL = Config.websocketURL else {
+            log("Skipped relay websocket connect because relay URL is unavailable")
+            DispatchQueue.main.async {
+                self.isConnecting = false
+                self.isConnected = false
+                self.dashboardConnected = false
+            }
+            return
+        }
+
+        var request = URLRequest(url: websocketURL)
         request.timeoutInterval = 5
         logRequest("GET", request: request)
 
@@ -927,7 +940,10 @@ class MessageStore: NSObject, ObservableObject {
             return
         }
 
-        let url = Config.apiURL.appendingPathComponent("/poll")
+        guard let url = Config.apiURL?.appendingPathComponent("/poll") else {
+            log("Skipped relay poll because relay URL is unavailable")
+            return
+        }
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.setValue(Config.deviceToken, forHTTPHeaderField: "x-device-token")
@@ -1127,7 +1143,11 @@ class MessageStore: NSObject, ObservableObject {
     // MARK: - Session Messages
     
     func fetchSessionMessages(sessionId: String, completion: @escaping ([SessionMessage]) -> Void) {
-        let url = Config.apiURL.appendingPathComponent("/dashboard/sessions/\(sessionId)/messages")
+        guard let url = Config.apiURL?.appendingPathComponent("/dashboard/sessions/\(sessionId)/messages") else {
+            log("Skipped relay session fetch because relay URL is unavailable")
+            DispatchQueue.main.async { completion([]) }
+            return
+        }
         var request = URLRequest(url: url)
         request.setValue(Config.deviceToken, forHTTPHeaderField: "x-device-token")
 
@@ -1174,7 +1194,11 @@ class MessageStore: NSObject, ObservableObject {
     // MARK: - Agent Actions
     
     func pingAgent(agentId: String, completion: @escaping (Bool) -> Void) {
-        let url = Config.apiURL.appendingPathComponent("/message")
+        guard let url = Config.apiURL?.appendingPathComponent("/message") else {
+            log("Skipped relay ping because relay URL is unavailable")
+            DispatchQueue.main.async { completion(false) }
+            return
+        }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")

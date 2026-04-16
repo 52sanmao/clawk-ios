@@ -322,7 +322,7 @@ struct SettingsFormContent: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
 
-                Text("只需要填写一次完整的 IronClaw 地址，App 会让聊天、Dashboard 和 Relay 默认跟随这个地址；支持保留 https:// 和路径前缀。")
+                Text("只需要填写一次完整的 IronClaw 地址，App 会让聊天和 Dashboard 默认跟随这个地址；Relay 默认关闭，只有单独填写时才启用。")
                     .font(.caption)
                     .foregroundColor(.secondary)
 
@@ -420,7 +420,7 @@ struct SettingsFormContent: View {
 
             // Relay server (optional)
             Section {
-                TextField("Relay 地址（留空时跟随 IronClaw）", text: $relayURL)
+                TextField("Relay 地址（留空则禁用）", text: $relayURL)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
 
@@ -440,7 +440,7 @@ struct SettingsFormContent: View {
             } header: {
                 Text("Relay 服务（可选）")
             } footer: {
-                Text("默认复用 IronClaw 地址；只有推送服务单独部署时才需要单独覆盖。")
+                Text("留空表示完全禁用旧 Relay 推送链路；只有推送服务单独部署时才需要填写。")
             }
 
             // Auto-discover
@@ -534,7 +534,7 @@ struct SettingsFormContent: View {
         let shouldFollowGatewayForDashboard = dashboardURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || storedDashboard.isEmpty
             || storedDashboard == previousGateway
-        let shouldFollowGatewayForRelay = relayURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let shouldDisableRelay = relayURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || storedRelay.isEmpty
             || storedRelay == previousGateway
             || Config.usesLegacyLocalRelayDefault
@@ -546,9 +546,9 @@ struct SettingsFormContent: View {
             dashboardAPI.updateBaseURL(normalized.host)
         }
 
-        if shouldFollowGatewayForRelay {
+        if shouldDisableRelay {
             relayURL = ""
-            Config.persistRelayBaseURL(normalized.host)
+            Config.persistRelayBaseURL("")
             messageStore.reloadConfiguration()
         }
     }
@@ -562,9 +562,13 @@ struct SettingsFormContent: View {
 
     private func applyRelaySettings() {
         let trimmed = relayURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        let resolved = trimmed.isEmpty ? gateway.gatewayHost : trimmed
-        relayURL = trimmed.isEmpty ? "" : resolved
-        Config.persistRelayBaseURL(resolved)
+        if trimmed.isEmpty {
+            relayURL = ""
+            Config.persistRelayBaseURL("")
+        } else {
+            relayURL = trimmed
+            Config.persistRelayBaseURL(trimmed)
+        }
         messageStore.reloadConfiguration()
     }
 

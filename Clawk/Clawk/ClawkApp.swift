@@ -17,10 +17,7 @@ struct ClawkApp: App {
                     Task {
                         let normalized = GatewayConnection.normalizeGatewayEndpoint(gateway.gatewayHost, fallbackPort: gateway.gatewayPort)
                         dashboardAPI.updateBaseURL(normalized.host)
-                        if UserDefaults.standard.string(forKey: "relayBaseURL")?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
-                            Config.persistRelayBaseURL(normalized.host)
-                            messageStore.reloadConfiguration()
-                        }
+                        messageStore.reloadConfiguration()
 
                         await dashboardAPI.checkHealth()
 

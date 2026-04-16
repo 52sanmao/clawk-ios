@@ -18,7 +18,7 @@ enum Config {
         if let storedRelay, !storedRelay.isEmpty {
             return storedRelay
         }
-        return gatewayFallbackURL
+        return ""
     }
 
     static var isRelayEnabled: Bool {
@@ -37,16 +37,22 @@ enum Config {
         }
     }
 
-    static var websocketURL: URL {
-        var components = URLComponents(string: relayBaseURL)!
+    static var websocketURL: URL? {
+        guard !relayBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              var components = URLComponents(string: relayBaseURL) else {
+            return nil
+        }
         components.scheme = components.scheme == "https" ? "wss" : "ws"
         components.path = "/"
         components.queryItems = [URLQueryItem(name: "token", value: deviceToken)]
-        return components.url!
+        return components.url
     }
 
-    static var apiURL: URL {
-        URL(string: relayBaseURL)!
+    static var apiURL: URL? {
+        guard !relayBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            return nil
+        }
+        return URL(string: relayBaseURL)
     }
 
     static var usesLegacyLocalRelayDefault: Bool {
