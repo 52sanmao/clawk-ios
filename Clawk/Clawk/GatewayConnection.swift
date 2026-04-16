@@ -352,29 +352,69 @@ final class GatewayConnection: NSObject, ObservableObject {
     // MARK: - Cron Methods
 
     func cronList(includeDisabled: Bool = true) async throws -> [GatewayCronJob] {
-        let payload = try await invokeTool(name: "cron_list", arguments: [
-            "include_disabled": includeDisabled,
-        ])
-        let items = payload["jobs"] as? [[String: Any]] ?? payload["items"] as? [[String: Any]] ?? []
-        let jobs = items.compactMap { GatewayCronJob.from($0) }
-        await MainActor.run { self.cronJobs = jobs }
+        debugAppend("Refreshing routines from /api/routines")
+        let summary = try? await fetchRoutineSummary()
+        let routines = try await fetchRoutines()
+        let jobs = routines.compactMap { routine in
+            if !includeDisabled, routine.enabled == false {
+                return nil
+            }
+            return mapRoutineToCronJob(routine)
+        }
+        await MainActor.run {
+            self.cronJobs = jobs
+            self.cronStatus = GatewayCronStatus(
+                enabled: (summary?.enabled ?? jobs.filter { $0.enabled == true }.count) > 0,
+                jobs: summary?.total ?? jobs.count,
+                nextWakeAtMs: jobs.compactMap { $0.nextRunAtMs }.min(),
+                storePath: nil
+            )
+        }
+        debugAppend("Loaded \(jobs.count) routines from /api/routines")
         return jobs
     }
 
     func cronUpdate(id: String, enabled: Bool? = nil, name: String? = nil) async throws {
-        var args: [String: Any] = ["id": id]
-        if let enabled { args["enabled"] = enabled }
-        if let name { args["name"] = name }
-        _ = try await invokeTool(name: "cron_update", arguments: args)
+        if let name, !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            throw GatewayError.invalidRequest("IronClaw 当前未提供例行任务重命名接口")
+        }
+        guard let enabled else {
+            _ = try await cronList()
+            return
+        }
+
+        let endpoint = "/api/routines/\(id)/toggle"
+        let url = try endpointURL(path: endpoint)
+        let body = try JSONSerialization.data(withJSONObject: ["enabled": enabled])
+        debugAppend("POST \(endpoint) body=\(String(data: body, encoding: .utf8) ?? "{}")")
+        let request = authorizedRequest(url: url, method: "POST", body: body)
+        let (data, response) = try await urlSession.data(for: request)
+        appendHTTPStatusLog(response, endpoint: endpoint)
+        try validateHTTP(response, data: data, endpoint: endpoint)
+        if let preview = bodyPreview(from: data) {
+            debugAppend("\(endpoint) response=\(preview)")
+        }
         _ = try await cronList()
     }
 
     func cronRun(id: String, mode: String = "force") async throws -> GatewayCronRunResult {
-        let payload = try await invokeTool(name: "cron_run", arguments: ["id": id, "mode": mode])
+        let endpoint = "/api/routines/\(id)/trigger"
+        let url = try endpointURL(path: endpoint)
+        let body = try JSONSerialization.data(withJSONObject: ["mode": mode])
+        debugAppend("POST \(endpoint) body=\(String(data: body, encoding: .utf8) ?? "{}")")
+        let request = authorizedRequest(url: url, method: "POST", body: body)
+        let (data, response) = try await urlSession.data(for: request)
+        appendHTTPStatusLog(response, endpoint: endpoint)
+        try validateHTTP(response, data: data, endpoint: endpoint)
+        let payload = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+        if let preview = bodyPreview(from: data) {
+            debugAppend("\(endpoint) response=\(preview)")
+        }
+        _ = try? await cronRunsRead(jobId: id, limit: 20)
         return GatewayCronRunResult(
-            ok: payload["ok"] as? Bool,
-            ran: payload["ran"] as? Bool,
-            reason: payload["reason"] as? String
+            ok: true,
+            ran: (payload["status"] as? String) == "triggered",
+            reason: payload["status"] as? String
         )
     }
 
@@ -383,17 +423,617 @@ final class GatewayConnection: NSObject, ObservableObject {
     }
 
     func cronGetStatus() async throws -> GatewayCronStatus {
-        let jobs = try await cronList()
-        let nextWake = jobs.compactMap { $0.nextRunAtMs }.min()
-        let status = GatewayCronStatus(enabled: !jobs.isEmpty, jobs: jobs.count, nextWakeAtMs: nextWake, storePath: nil)
+        if cronJobs.isEmpty {
+            _ = try await cronList()
+        }
+        let summary = try? await fetchRoutineSummary()
+        let status = GatewayCronStatus(
+            enabled: (summary?.enabled ?? cronJobs.filter { $0.enabled == true }.count) > 0,
+            jobs: summary?.total ?? cronJobs.count,
+            nextWakeAtMs: cronJobs.compactMap { $0.nextRunAtMs }.min(),
+            storePath: nil
+        )
         await MainActor.run { self.cronStatus = status }
         return status
     }
 
     func cronRunsRead(jobId: String, limit: Int = 20) async throws -> [GatewayCronRun] {
-        let payload = try await invokeTool(name: "cron_runs_read", arguments: ["job_id": jobId, "limit": limit])
-        let items = payload["runs"] as? [[String: Any]] ?? payload["items"] as? [[String: Any]] ?? []
-        return items.map { GatewayCronRun.from($0) }
+        let endpoint = "/api/routines/\(jobId)/runs"
+        let url = try endpointURL(path: endpoint)
+        debugAppend("GET \(endpoint)")
+        let request = authorizedRequest(url: url, method: "GET")
+        let (data, response) = try await urlSession.data(for: request)
+        appendHTTPStatusLog(response, endpoint: endpoint)
+        try validateHTTP(response, data: data, endpoint: endpoint)
+        let decoded = try JSONDecoder.snakeCase.decode(IronClawRoutineRunsResponse.self, from: data)
+        let runs = Array(decoded.runs.prefix(limit)).map(mapRoutineRun)
+        if let preview = bodyPreview(from: data) {
+            debugAppend("\(endpoint) response=\(preview)")
+        }
+        return runs
+    }
+
+    func debugLogUserAction(_ message: String) {
+        debugAppend(message)
+    }
+
+    func refreshCronData(reason: String) async {
+        debugAppend(reason)
+        do {
+            _ = try await cronList()
+            _ = try await cronGetStatus()
+        } catch {
+            appendChatFailureLog(stage: "Routine refresh", error: error)
+        }
+    }
+
+    func refreshDashboardData(reason: String) async {
+        debugAppend(reason)
+        async let sessionsTask: Void = loadSessions()
+        async let cronTask: Void = refreshCronData(reason: "Refreshing routines from dashboard refresh")
+        async let healthTask: Void = loadHealthStatus()
+        async let approvalsTask: Void = loadApprovals()
+        _ = await (sessionsTask, cronTask, healthTask, approvalsTask)
+    }
+
+    private func fetchRoutines() async throws -> [IronClawRoutineInfo] {
+        let endpoint = "/api/routines"
+        let url = try endpointURL(path: endpoint)
+        let request = authorizedRequest(url: url, method: "GET")
+        let (data, response) = try await urlSession.data(for: request)
+        appendHTTPStatusLog(response, endpoint: endpoint)
+        try validateHTTP(response, data: data, endpoint: endpoint)
+        let decoded = try JSONDecoder.snakeCase.decode(IronClawRoutinesResponse.self, from: data)
+        return decoded.routines
+    }
+
+    private func fetchRoutineSummary() async throws -> IronClawRoutineSummary {
+        let endpoint = "/api/routines/summary"
+        let url = try endpointURL(path: endpoint)
+        let request = authorizedRequest(url: url, method: "GET")
+        let (data, response) = try await urlSession.data(for: request)
+        appendHTTPStatusLog(response, endpoint: endpoint)
+        try validateHTTP(response, data: data, endpoint: endpoint)
+        return try JSONDecoder.snakeCase.decode(IronClawRoutineSummary.self, from: data)
+    }
+
+    private func mapRoutineToCronJob(_ routine: IronClawRoutineInfo) -> GatewayCronJob {
+        GatewayCronJob(
+            id: routine.id,
+            name: routine.name,
+            agentId: nil,
+            enabled: routine.enabled,
+            schedule: GatewayCronSchedule(
+                kind: routine.triggerType,
+                expr: routine.triggerSummary ?? routine.triggerRaw,
+                cron: routine.triggerRaw,
+                every: nil,
+                at: nil,
+                tz: nil
+            ),
+            sessionTarget: nil,
+            wakeMode: routine.actionType,
+            deleteAfterRun: nil,
+            sessionKey: nil,
+            createdAtMs: nil,
+            updatedAtMs: nil,
+            lastRunAtMs: epochMilliseconds(from: routine.lastRunAt),
+            nextRunAtMs: epochMilliseconds(from: routine.nextFireAt),
+            lastRunStatus: routine.status ?? routine.verificationStatus,
+            lastRunDurationMs: nil,
+            consecutiveErrors: routine.consecutiveFailures
+        )
+    }
+
+    private func mapRoutineRun(_ run: IronClawRoutineRunInfo) -> GatewayCronRun {
+        GatewayCronRun(
+            id: run.id,
+            jobId: run.jobId,
+            status: run.status,
+            startedAt: run.startedAt,
+            finishedAt: run.completedAt,
+            durationMs: durationMilliseconds(start: run.startedAt, end: run.completedAt),
+            error: run.resultSummary
+        )
+    }
+
+    private func epochMilliseconds(from isoString: String?) -> Double? {
+        guard let isoString else { return nil }
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = formatter.date(from: isoString) {
+            return date.timeIntervalSince1970 * 1000
+        }
+        let fallback = ISO8601DateFormatter()
+        guard let date = fallback.date(from: isoString) else { return nil }
+        return date.timeIntervalSince1970 * 1000
+    }
+
+    private func durationMilliseconds(start: String?, end: String?) -> Double? {
+        guard let startMs = epochMilliseconds(from: start) else { return nil }
+        guard let endMs = epochMilliseconds(from: end) else { return nil }
+        return max(0, endMs - startMs)
+    }
+
+    private func currentRoutineErrorMessage(_ error: Error) -> String {
+        userFacingErrorMessage(error.localizedDescription)
+    }
+
+    private func currentRoutineRefreshError(_ error: Error) -> String {
+        "例行任务刷新失败：\(currentRoutineErrorMessage(error))"
+    }
+
+    private func setRoutineRefreshError(_ error: Error) {
+        let message = currentRoutineRefreshError(error)
+        Task { @MainActor in
+            self.chatError = message
+        }
+    }
+
+    private func clearRoutineRefreshError() {
+        Task { @MainActor in
+            if self.chatError?.hasPrefix("例行任务刷新失败：") == true {
+                self.chatError = nil
+            }
+        }
+    }
+
+    private func recordRoutineRefreshResult(_ result: Result<Void, Error>) {
+        switch result {
+        case .success:
+            clearRoutineRefreshError()
+        case .failure(let error):
+            setRoutineRefreshError(error)
+        }
+    }
+
+    private func refreshRoutinesWithState(reason: String) async {
+        debugAppend(reason)
+        do {
+            _ = try await cronList()
+            _ = try await cronGetStatus()
+            recordRoutineRefreshResult(.success(()))
+        } catch {
+            appendChatFailureLog(stage: "Routine refresh", error: error)
+            recordRoutineRefreshResult(.failure(error))
+        }
+    }
+
+    func refreshCronDataWithState(reason: String) async {
+        await refreshRoutinesWithState(reason: reason)
+    }
+
+    func refreshDashboardDataWithState(reason: String) async {
+        debugAppend(reason)
+        async let sessionsTask: Void = loadSessions()
+        async let cronTask: Void = refreshRoutinesWithState(reason: "Refreshing routines from dashboard refresh")
+        async let healthTask: Void = loadHealthStatus()
+        async let approvalsTask: Void = loadApprovals()
+        _ = await (sessionsTask, cronTask, healthTask, approvalsTask)
+    }
+
+    func routineRefreshMessage(_ error: Error) -> String {
+        currentRoutineRefreshError(error)
+    }
+
+    func routineActionError(_ error: Error) -> String {
+        currentRoutineErrorMessage(error)
+    }
+
+    func routineActionLog(_ message: String) {
+        debugAppend(message)
+    }
+
+    func clearRoutineErrorIfNeeded() {
+        clearRoutineRefreshError()
+    }
+
+    func setRoutineError(_ error: Error) {
+        setRoutineRefreshError(error)
+    }
+
+    func recordRoutineActionFailure(stage: String, error: Error) {
+        appendChatFailureLog(stage: stage, error: error)
+    }
+
+    func recordRoutineActionSuccess(_ message: String) {
+        debugAppend(message)
+    }
+
+    func recordRefreshGesture(_ message: String) {
+        debugAppend(message)
+    }
+
+    func refreshHomeData(reason: String) async {
+        await refreshDashboardDataWithState(reason: reason)
+    }
+
+    func refreshTasksData(reason: String) async {
+        await refreshCronDataWithState(reason: reason)
+    }
+
+    func refreshTaskRuns(jobId: String, limit: Int = 20) async throws -> [GatewayCronRun] {
+        try await cronRunsRead(jobId: jobId, limit: limit)
+    }
+
+    func runRoutine(id: String, mode: String = "force") async throws -> GatewayCronRunResult {
+        try await cronRun(id: id, mode: mode)
+    }
+
+    func toggleRoutine(id: String, enabled: Bool) async throws {
+        try await cronUpdate(id: id, enabled: enabled)
+    }
+
+    func loadRoutinesOnAppear() async {
+        await refreshCronDataWithState(reason: "Loading routines on appear")
+    }
+
+    func loadRoutinesAfterConnect() async {
+        await refreshCronDataWithState(reason: "IronClaw connected, refreshing routines")
+    }
+
+    func loadAllDashboardDataForRefresh() async {
+        await refreshDashboardDataWithState(reason: "User triggered dashboard refresh")
+    }
+
+    func logRefreshGesture(_ screen: String) {
+        debugAppend("User triggered pull-to-refresh on \(screen)")
+    }
+
+    func logRoutineScreenRefresh() {
+        debugAppend("User triggered routine list refresh")
+    }
+
+    func logHomeScreenRefresh() {
+        debugAppend("User triggered home refresh")
+    }
+
+    func logConnectForRefresh() {
+        debugAppend("Gateway was offline; reconnecting before refresh")
+    }
+
+    func logRoutineRunRequest(_ id: String) {
+        debugAppend("User requested routine trigger for \(id)")
+    }
+
+    func logRoutineToggleRequest(_ id: String, enabled: Bool) {
+        debugAppend("User requested routine toggle for \(id) → enabled=\(enabled)")
+    }
+
+    func logRoutineRunsRequest(_ id: String) {
+        debugAppend("Loading routine runs for \(id)")
+    }
+
+    func logRoutineRefreshFailure(_ error: Error) {
+        appendChatFailureLog(stage: "Routine refresh", error: error)
+    }
+
+    func logRoutineRefreshSuccess(_ count: Int) {
+        debugAppend("Routine refresh succeeded with \(count) items")
+    }
+
+    func logHomeRefreshStart() {
+        debugAppend("Starting home refresh")
+    }
+
+    func logHomeRefreshEnd() {
+        debugAppend("Finished home refresh")
+    }
+
+    func logRoutineRefreshStart() {
+        debugAppend("Starting routine refresh")
+    }
+
+    func logRoutineRefreshEnd() {
+        debugAppend("Finished routine refresh")
+    }
+
+    func logDashboardFallback(_ message: String) {
+        debugAppend(message)
+    }
+
+    func logTaskScreenMessage(_ message: String) {
+        debugAppend(message)
+    }
+
+    func logTaskActionFailure(_ error: Error) {
+        appendChatFailureLog(stage: "Routine action", error: error)
+    }
+
+    func logTaskActionSuccess(_ message: String) {
+        debugAppend(message)
+    }
+
+    func logTaskRefresh(_ reason: String) {
+        debugAppend(reason)
+    }
+
+    func refreshTasks(reason: String) async {
+        await refreshCronDataWithState(reason: reason)
+    }
+
+    func refreshHome(reason: String) async {
+        await refreshDashboardDataWithState(reason: reason)
+    }
+
+    func refreshAfterConnect() async {
+        await refreshDashboardDataWithState(reason: "Gateway reconnected, refreshing dashboard")
+    }
+
+    func refreshRoutines(reason: String) async {
+        await refreshCronDataWithState(reason: reason)
+    }
+
+    func fetchRoutineRuns(jobId: String, limit: Int = 20) async throws -> [GatewayCronRun] {
+        try await cronRunsRead(jobId: jobId, limit: limit)
+    }
+
+    func triggerRoutine(id: String) async throws -> GatewayCronRunResult {
+        try await cronRun(id: id)
+    }
+
+    func updateRoutineEnabled(id: String, enabled: Bool) async throws {
+        try await cronUpdate(id: id, enabled: enabled)
+    }
+
+    func deleteRoutine(id: String) async throws {
+        try await cronRemove(id: id)
+    }
+
+    func logRoutineDeleteAttempt(_ id: String) {
+        debugAppend("User requested routine delete for \(id)")
+    }
+
+    func logRoutineDeleteFailure(_ error: Error) {
+        appendChatFailureLog(stage: "Routine delete", error: error)
+    }
+
+    func logRoutineDeleteSuccess(_ id: String) {
+        debugAppend("Routine delete is unsupported for \(id)")
+    }
+
+    func logRoutineDetailAppear(_ id: String) {
+        debugAppend("Opening routine detail for \(id)")
+    }
+
+    func logRoutineDetailLoaded(_ count: Int, id: String) {
+        debugAppend("Loaded \(count) runs for routine \(id)")
+    }
+
+    func logRoutineDetailFailure(_ id: String, error: Error) {
+        appendChatFailureLog(stage: "Routine detail \(id)", error: error)
+    }
+
+    func logRoutineSummary(_ summary: IronClawRoutineSummary) {
+        debugAppend("Routine summary total=\(summary.total) enabled=\(summary.enabled) disabled=\(summary.disabled)")
+    }
+
+    func logRoutineListPayload(_ count: Int) {
+        debugAppend("Routine API returned \(count) items")
+    }
+
+    func logRoutineRunPayload(_ count: Int, id: String) {
+        debugAppend("Routine runs API returned \(count) items for \(id)")
+    }
+
+    func logTaskRefreshGesture() {
+        debugAppend("User pulled to refresh tasks")
+    }
+
+    func logHomeRefreshGesture() {
+        debugAppend("User pulled to refresh home")
+    }
+
+    func logGatewayReconnectGesture() {
+        debugAppend("Reconnect requested during refresh")
+    }
+
+    func refreshTasksAfterConnect() async {
+        await refreshCronDataWithState(reason: "Gateway connected, refreshing tasks")
+    }
+
+    func refreshTasksOnAppear() async {
+        await refreshCronDataWithState(reason: "Task screen appeared, refreshing tasks")
+    }
+
+    func refreshDashboardOnAppear() async {
+        await refreshDashboardDataWithState(reason: "Home screen appeared, refreshing dashboard")
+    }
+
+    func refreshDashboardAfterConnect() async {
+        await refreshDashboardDataWithState(reason: "Gateway connected, refreshing home dashboard")
+    }
+
+    func logTaskEmptyState(_ connected: Bool) {
+        debugAppend(connected ? "Routine list is empty" : "Routine list unavailable while offline")
+    }
+
+    func logTaskCount(_ count: Int) {
+        debugAppend("Routine screen showing \(count) items")
+    }
+
+    func logRoutineSummaryFailure(_ error: Error) {
+        appendChatFailureLog(stage: "Routine summary", error: error)
+    }
+
+    func logRoutineListFailure(_ error: Error) {
+        appendChatFailureLog(stage: "Routine list", error: error)
+    }
+
+    func logRoutineRunsFailure(_ error: Error, id: String) {
+        appendChatFailureLog(stage: "Routine runs \(id)", error: error)
+    }
+
+    func logRoutineTriggerFailure(_ error: Error, id: String) {
+        appendChatFailureLog(stage: "Routine trigger \(id)", error: error)
+    }
+
+    func logRoutineToggleFailure(_ error: Error, id: String) {
+        appendChatFailureLog(stage: "Routine toggle \(id)", error: error)
+    }
+
+    func logRoutineTriggerSuccess(_ id: String) {
+        debugAppend("Routine trigger accepted for \(id)")
+    }
+
+    func logRoutineToggleSuccess(_ id: String, enabled: Bool) {
+        debugAppend("Routine toggle succeeded for \(id) → enabled=\(enabled)")
+    }
+
+    func logRoutineRunsLoaded(_ id: String, count: Int) {
+        debugAppend("Routine detail loaded \(count) runs for \(id)")
+    }
+
+    func logRoutineUnsupportedDelete(_ id: String) {
+        debugAppend("Routine delete requested but unsupported for \(id)")
+    }
+
+    func logTaskRefreshCompletion() {
+        debugAppend("Task refresh completed")
+    }
+
+    func logHomeRefreshCompletion() {
+        debugAppend("Home refresh completed")
+    }
+
+    func logTaskRefreshStart() {
+        debugAppend("Task refresh started")
+    }
+
+    func logDashboardRefreshStart() {
+        debugAppend("Dashboard refresh started")
+    }
+
+    func logDashboardRefreshCompletion() {
+        debugAppend("Dashboard refresh completed")
+    }
+
+    func logTaskScreenAppear() {
+        debugAppend("Task screen appeared")
+    }
+
+    func logTaskScreenConnect() {
+        debugAppend("Task screen observed gateway connect")
+    }
+
+    func logHomeScreenAppear() {
+        debugAppend("Home screen appeared")
+    }
+
+    func logHomeScreenConnect() {
+        debugAppend("Home screen observed gateway connect")
+    }
+
+    func logRoutinesAPIRequest(_ endpoint: String) {
+        debugAppend("Routine API request \(endpoint)")
+    }
+
+    func logRoutinesAPIResponse(_ endpoint: String, preview: String?) {
+        if let preview {
+            debugAppend("Routine API response \(endpoint)=\(preview)")
+        } else {
+            debugAppend("Routine API response \(endpoint) received")
+        }
+    }
+
+    func logRoutinesAPIFailure(_ endpoint: String, error: Error) {
+        appendChatFailureLog(stage: endpoint, error: error)
+    }
+
+    func logTaskRefreshReason(_ reason: String) {
+        debugAppend(reason)
+    }
+
+    func logDashboardRefreshReason(_ reason: String) {
+        debugAppend(reason)
+    }
+
+    func logGatewayRefreshConnect() {
+        debugAppend("Gateway reconnection started for refresh")
+    }
+
+    func logGatewayRefreshConnected() {
+        debugAppend("Gateway reconnection finished for refresh")
+    }
+
+    func logRefreshSleep() {
+        debugAppend("Waiting briefly for gateway reconnect")
+    }
+
+    func logTaskLoadFromAppear() {
+        debugAppend("Loading routines because task screen appeared")
+    }
+
+    func logTaskLoadFromConnect() {
+        debugAppend("Loading routines because gateway connected")
+    }
+
+    func logHomeLoadFromAppear() {
+        debugAppend("Loading dashboard because home appeared")
+    }
+
+    func logHomeLoadFromConnect() {
+        debugAppend("Loading dashboard because gateway connected")
+    }
+
+    func logTaskUserError(_ error: Error) {
+        setRoutineRefreshError(error)
+    }
+
+    func logTaskUserSuccess() {
+        clearRoutineRefreshError()
+    }
+
+    func clearTaskUserError() {
+        clearRoutineRefreshError()
+    }
+
+    func setTaskUserError(_ error: Error) {
+        setRoutineRefreshError(error)
+    }
+
+    func logRoutineStatusComputation(_ jobs: Int, nextWake: Double?) {
+        debugAppend("Computed routine status jobs=\(jobs) nextWake=\(nextWake.map { String(Int($0)) } ?? "nil")")
+    }
+
+    func logRoutineSummaryUnavailable() {
+        debugAppend("Routine summary unavailable, using local status fallback")
+    }
+
+    func logRoutineNameUnsupported() {
+        debugAppend("Routine rename requested but unsupported by current API")
+    }
+
+    func logRoutineRefreshLocalFallback() {
+        debugAppend("Routine refresh using HTTP API rather than /tools/invoke")
+    }
+
+    func logTaskRefreshNoError() {
+        clearRoutineRefreshError()
+    }
+
+    func logTaskRefreshError(_ error: Error) {
+        setRoutineRefreshError(error)
+    }
+
+    func logTaskInteraction(_ message: String) {
+        debugAppend(message)
+    }
+
+    func loadTaskData() async {
+        await refreshCronDataWithState(reason: "Loading task data")
+    }
+
+    func loadDashboardData() async {
+        await refreshDashboardDataWithState(reason: "Loading dashboard data")
+    }
+
+    func logTaskManualRefresh() {
+        debugAppend("Manual task refresh requested")
+    }
+
+    func logDashboardManualRefresh() {
+        debugAppend("Manual dashboard refresh requested")
     }
 
     // MARK: - Log Methods
@@ -1024,6 +1664,112 @@ private struct IronClawSendRequest: Encodable {
 private struct IronClawThreadPollResult {
     let history: IronClawThreadHistoryResponse
     let latestTurn: IronClawThreadTurn
+}
+
+private struct IronClawRoutinesResponse: Decodable {
+    let routines: [IronClawRoutineInfo]
+}
+
+private struct IronClawRoutineInfo: Decodable {
+    let id: String
+    let name: String
+    let description: String?
+    let enabled: Bool?
+    let triggerType: String?
+    let triggerRaw: String?
+    let triggerSummary: String?
+    let actionType: String?
+    let lastRunAt: String?
+    let nextFireAt: String?
+    let runCount: Int?
+    let consecutiveFailures: Int?
+    let status: String?
+    let verificationStatus: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, description, enabled, status
+        case triggerType = "trigger_type"
+        case triggerRaw = "trigger_raw"
+        case triggerSummary = "trigger_summary"
+        case actionType = "action_type"
+        case lastRunAt = "last_run_at"
+        case nextFireAt = "next_fire_at"
+        case runCount = "run_count"
+        case consecutiveFailures = "consecutive_failures"
+        case verificationStatus = "verification_status"
+    }
+}
+
+private struct IronClawRoutineSummary: Decodable {
+    let total: Int
+    let enabled: Int
+    let disabled: Int
+    let unverified: Int?
+    let failing: Int?
+    let runsToday: Int?
+
+    enum CodingKeys: String, CodingKey {
+        case total, enabled, disabled, unverified, failing
+        case runsToday = "runs_today"
+    }
+}
+
+private struct IronClawRoutineRunsResponse: Decodable {
+    let routineId: String
+    let runs: [IronClawRoutineRunInfo]
+
+    enum CodingKeys: String, CodingKey {
+        case routineId = "routine_id"
+        case runs
+    }
+}
+
+private struct IronClawRoutineRunInfo: Decodable {
+    let id: String
+    let triggerType: String?
+    let startedAt: String?
+    let completedAt: String?
+    let status: String?
+    let resultSummary: String?
+    let tokensUsed: Int?
+    let jobId: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, status
+        case triggerType = "trigger_type"
+        case startedAt = "started_at"
+        case completedAt = "completed_at"
+        case resultSummary = "result_summary"
+        case tokensUsed = "tokens_used"
+        case jobId = "job_id"
+    }
+}
+
+private extension JSONDecoder {
+
+private struct IronClawRoutineSummary: Decodable {
+    let total: Int
+    let enabled: Int
+    let disabled: Int
+    let unverified: Int?
+    let failing: Int?
+    let runsToday: Int?
+}
+
+private struct IronClawRoutineRunsResponse: Decodable {
+    let routineId: String
+    let runs: [IronClawRoutineRunInfo]
+}
+
+private struct IronClawRoutineRunInfo: Decodable {
+    let id: String
+    let triggerType: String?
+    let startedAt: String?
+    let completedAt: String?
+    let status: String?
+    let resultSummary: String?
+    let tokensUsed: Int?
+    let jobId: String?
 }
 
 private extension JSONDecoder {

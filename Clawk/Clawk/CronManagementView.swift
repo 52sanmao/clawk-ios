@@ -44,21 +44,25 @@ struct CronManagementView: View {
             .padding()
         }
         .refreshable {
+            gateway.logTaskRefreshGesture()
             if !gateway.isConnected && !gateway.isConnecting {
+                gateway.logConnectForRefresh()
                 gateway.connect()
                 try? await Task.sleep(nanoseconds: 2_000_000_000)
             }
-            await refreshCronJobs()
+            await refreshCronJobs(reason: "User pulled to refresh tasks")
         }
         .sheet(item: $selectedJob) { job in
             CronJobDetailView(job: job, gateway: gateway)
         }
         .onAppear {
-            Task { await refreshCronJobs() }
+            gateway.logTaskScreenAppear()
+            Task { await refreshCronJobs(reason: "Task screen appeared") }
         }
         .onChange(of: gateway.isConnected) { _, connected in
             if connected {
-                Task { await refreshCronJobs() }
+                gateway.logTaskScreenConnect()
+                Task { await refreshCronJobs(reason: "Gateway connected, refreshing tasks") }
             }
         }
     }
@@ -71,16 +75,25 @@ struct CronManagementView: View {
         gateway.cronJobs.filter { $0.isHeartbeat }
     }
 
-    private func refreshCronJobs() async {
-        isRefreshing = true
+    private func refreshCronJobs(reason: String) async {
+        await MainActor.run {
+            isRefreshing = true
+            errorMessage = nil
+        }
+        gateway.logTaskRefresh(reason)
+        gateway.logRoutineRefreshStart()
         do {
             let jobs = try await gateway.cronList()
-            await MainActor.run { gateway.cronJobs = jobs }
             let _ = try await gateway.cronGetStatus()
+            gateway.logRoutineRefreshSuccess(jobs.count)
+            gateway.logTaskCount(jobs.count)
+            await MainActor.run { errorMessage = nil }
         } catch {
-            await MainActor.run { errorMessage = error.localizedDescription }
+            gateway.logRoutineRefreshFailure(error)
+            await MainActor.run { errorMessage = gateway.routineRefreshMessage(error) }
         }
-        isRefreshing = false
+        gateway.logRoutineRefreshEnd()
+        await MainActor.run { isRefreshing = false }
     }
 }
 
@@ -233,13 +246,15 @@ struct CronJobCard: View {
 
     private func toggleJob(enabled: Bool) {
         isToggling = true
+        gateway.logRoutineToggleRequest(job.id, enabled: enabled)
         Task {
             do {
                 try await gateway.cronUpdate(id: job.id, enabled: enabled)
+                gateway.logRoutineToggleSuccess(job.id, enabled: enabled)
                 let generator = UIImpactFeedbackGenerator(style: .light)
                 generator.impactOccurred()
             } catch {
-                print("Failed to toggle cron job: \(error)")
+                gateway.logRoutineToggleFailure(error, id: job.id)
             }
             await MainActor.run { isToggling = false }
         }
@@ -248,9 +263,11 @@ struct CronJobCard: View {
     private func runJob() {
         isRunning = true
         runResult = nil
+        gateway.logRoutineRunRequest(job.id)
         Task {
             do {
                 let result = try await gateway.cronRun(id: job.id, mode: "force")
+                gateway.logRoutineTriggerSuccess(job.id)
                 await MainActor.run {
                     runResult = result.ran == true ? "运行成功" : (result.reason ?? "已跳过")
                     isRunning = false
@@ -258,16 +275,17 @@ struct CronJobCard: View {
                 let generator = UINotificationFeedbackGenerator()
                 generator.notificationOccurred(result.ran == true ? .success : .warning)
             } catch {
+                gateway.logRoutineTriggerFailure(error, id: job.id)
                 await MainActor.run {
                     runResult = "错误"
                     isRunning = false
                 }
             }
-            // Clear result after delay
             try? await Task.sleep(nanoseconds: 3_000_000_000)
             await MainActor.run { runResult = nil }
         }
     }
+
 }
 
 // MARK: - Cron Job Detail View
@@ -347,20 +365,34 @@ struct CronJobDetailView: View {
                     Button("完成") { dismiss() }
                 }
             }
-            .onAppear { loadRuns() }
+            .onAppear {
+                gateway.logRoutineDetailAppear(job.id)
+                loadRuns()
+            }
+            .refreshable {
+                gateway.logRoutineRunsRequest(job.id)
+                loadRuns()
+            }
         }
     }
 
     private func loadRuns() {
         Task {
+            await MainActor.run { isLoadingRuns = true }
+            gateway.logRoutineRunsRequest(job.id)
             do {
                 let fetchedRuns = try await gateway.cronRunsRead(jobId: job.id, limit: 20)
+                gateway.logRoutineRunsLoaded(job.id, count: fetchedRuns.count)
                 await MainActor.run {
                     runs = fetchedRuns
                     isLoadingRuns = false
                 }
             } catch {
-                await MainActor.run { isLoadingRuns = false }
+                gateway.logRoutineRunsFailure(error, id: job.id)
+                await MainActor.run {
+                    runs = []
+                    isLoadingRuns = false
+                }
             }
         }
     }

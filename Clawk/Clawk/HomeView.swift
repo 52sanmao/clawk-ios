@@ -41,26 +41,27 @@ struct HomeView: View {
                 .padding()
             }
             .refreshable {
-                // Force reconnect on pull-to-refresh if disconnected
+                gateway.logHomeRefreshGesture()
                 if !gateway.isConnected && !gateway.isConnecting {
+                    gateway.logGatewayReconnectGesture()
                     gateway.connect()
-                    // Wait briefly for connection to establish
+                    gateway.logRefreshSleep()
                     try? await Task.sleep(nanoseconds: 2_000_000_000)
                 }
-                await loadAllData()
+                await loadAllData(reason: "User pulled to refresh home")
             }
             .navigationTitle("首页")
             .onAppear {
-                // Trigger gateway connect if not already connected
+                gateway.logHomeScreenAppear()
                 if !gateway.isConnected && !gateway.isConnecting {
                     gateway.connect()
                 }
-                Task { await loadAllData() }
+                Task { await loadAllData(reason: "Home screen appeared") }
             }
             .onChange(of: gateway.isConnected) { _, connected in
                 if connected {
-                    // Gateway just connected — reload gateway-dependent data
-                    Task { await loadAllData() }
+                    gateway.logHomeScreenConnect()
+                    Task { await loadAllData(reason: "Gateway connected, refreshing home dashboard") }
                 }
             }
         }
@@ -537,8 +538,10 @@ struct HomeView: View {
 
     // MARK: - Data Loading
 
-    private func loadAllData() async {
-        // Load sessions
+    private func loadAllData(reason: String) async {
+        gateway.logDashboardRefreshReason(reason)
+        gateway.logDashboardRefreshStart()
+
         if let gw = try? await gateway.sessionsList(limit: 100) {
             let sorted = gw.sorted { ($0.updatedAt ?? $0.startedAt ?? "") > ($1.updatedAt ?? $1.startedAt ?? "") }
             await MainActor.run {
@@ -551,22 +554,17 @@ struct HomeView: View {
             }
         }
 
-        // Load costs
         if let costs = try? await dashboardAPI.fetchDisplayCosts(period: "week", preferences: costPreferences) {
             await MainActor.run { costData = costs }
         }
 
-        // Load memory files
         if let files = try? await dashboardAPI.fetchMemoryFiles() {
             await MainActor.run { memoryFiles = files }
         }
 
-        // Load cron
-        if let jobs = try? await gateway.cronList() {
-            await MainActor.run { gateway.cronJobs = jobs }
-        }
-        let _ = try? await gateway.cronGetStatus()
+        await gateway.refreshCronDataWithState(reason: "Home dashboard refreshing routines")
 
+        gateway.logDashboardRefreshCompletion()
         await MainActor.run { isLoading = false }
     }
 
