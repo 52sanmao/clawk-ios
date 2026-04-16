@@ -355,7 +355,7 @@ final class GatewayConnection: NSObject, ObservableObject {
         debugAppend("Refreshing routines from /api/routines")
         let summary = try? await fetchRoutineSummary()
         let routines = try await fetchRoutines()
-        let jobs = routines.compactMap { routine in
+        let jobs: [GatewayCronJob] = routines.compactMap { (routine: IronClawRoutineInfo) -> GatewayCronJob? in
             if !includeDisabled, routine.enabled == false {
                 return nil
             }
@@ -804,7 +804,7 @@ final class GatewayConnection: NSObject, ObservableObject {
         appendChatFailureLog(stage: "Routine detail \(id)", error: error)
     }
 
-    func logRoutineSummary(_ summary: IronClawRoutineSummary) {
+    fileprivate func logRoutineSummary(_ summary: IronClawRoutineSummary) {
         debugAppend("Routine summary total=\(summary.total) enabled=\(summary.enabled) disabled=\(summary.disabled)")
     }
 
