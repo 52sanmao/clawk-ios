@@ -466,8 +466,12 @@ struct HomeView: View {
                 Divider().padding(.leading, 48)
 
                 NavigationLink {
-                    GatewayDebugLogContent(gateway: gateway)
-                        .navigationTitle("调试日志")
+                    GatewayDebugLogContent(
+                        gateway: gateway,
+                        dashboardAPI: dashboardAPI,
+                        messageStore: messageStore
+                    )
+                    .navigationTitle("调试日志")
                 } label: {
                     moreRow(icon: "ant.fill", color: .gray, title: "调试日志")
                 }
