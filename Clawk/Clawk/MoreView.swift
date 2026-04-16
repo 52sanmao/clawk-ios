@@ -36,7 +36,7 @@ struct MoreView: View {
                                 Circle()
                                     .fill(gateway.isConnected ? Color.green : Color.red)
                                     .frame(width: 8, height: 8)
-                                Text(gateway.isConnected ? "网关在线" : "离线")
+                                Text(gateway.isConnected ? "IronClaw 在线" : "离线")
                                     .font(.caption2)
                                     .foregroundColor(.secondary)
                             }
@@ -84,30 +84,6 @@ struct MoreView: View {
                             .foregroundColor(.primary)
                     }
 
-                    NavigationLink {
-                        ApprovalQueueView(gateway: gateway)
-                            .navigationTitle("审批")
-                    } label: {
-                        Label {
-                            HStack {
-                                Text("审批")
-                                Spacer()
-                                if gateway.pendingApprovals.count > 0 {
-                                    Text("\(gateway.pendingApprovals.count)")
-                                        .font(.caption2)
-                                        .fontWeight(.bold)
-                                        .foregroundColor(.white)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(Color.orange)
-                                        .cornerRadius(8)
-                                }
-                            }
-                        } icon: {
-                            Image(systemName: "checkmark.shield.fill")
-                                .foregroundColor(.orange)
-                        }
-                    }
                 }
 
                 // Analytics
@@ -120,13 +96,6 @@ struct MoreView: View {
                             .foregroundColor(.primary)
                     }
 
-                    NavigationLink {
-                        AgentLogsView(gateway: gateway)
-                            .navigationTitle("日志")
-                    } label: {
-                        Label("日志", systemImage: "doc.text.magnifyingglass")
-                            .foregroundColor(.primary)
-                    }
                 }
 
                 // System
@@ -273,21 +242,25 @@ struct SettingsFormContent: View {
 
     var body: some View {
         Form {
-            // Gateway connection
+            // IronClaw connection
             Section {
-                TextField("主机 / WebSocket 地址", text: $gatewayHost)
+                TextField("IronClaw 地址", text: $gatewayHost)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
 
-                Text("支持 ws://、wss://，也支持 http://host:port/path 这类控制台地址，并会保留路径前缀。")
+                Text("支持填写完整的 http:// 或 https:// IronClaw 地址，并保留路径前缀。")
                     .font(.caption)
                     .foregroundColor(.secondary)
 
                 TextField("端口", text: $gatewayPort)
                     .keyboardType(.numberPad)
 
-                SecureField("令牌（可选）", text: $gatewayToken)
+                SecureField("IronClaw Bearer Token（可选）", text: $gatewayToken)
                     .textInputAutocapitalization(.never)
+
+                Text("聊天主链路使用 /api/chat/thread/new、/api/chat/send 与 /api/chat/history。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
 
                 HStack {
                     Circle()
@@ -313,9 +286,9 @@ struct SettingsFormContent: View {
                         .foregroundColor(.red)
                 }
             } header: {
-                Text("网关（OpenClaw）")
+                Text("IronClaw")
             } footer: {
-                Text("直接连接 OpenClaw Gateway 的 WebSocket 主通道（协议 v3）。")
+                Text("直接连接 IronClaw 原生 HTTP API，聊天通过线程接口轮询历史结果，不再依赖旧的 /v1/responses 主链路。")
             }
 
             // Dashboard connection
@@ -415,7 +388,7 @@ struct SettingsFormContent: View {
             } header: {
                 Text("配置")
             } footer: {
-                Text("从 Dashboard 的 /api/gateway-config 接口拉取网关地址和令牌。")
+                Text("从 Dashboard 的 /api/gateway-config 接口拉取 IronClaw 地址和令牌。")
             }
 
             // Agent identity
@@ -441,7 +414,7 @@ struct SettingsFormContent: View {
             // Device info
             Section("设备") {
                 DetailRow(label: "设备令牌", value: String(gateway.publicDeviceToken.prefix(12)) + "...")
-                DetailRow(label: "网关状态", value: gateway.gatewayStatus?.version ?? "—")
+                DetailRow(label: "IronClaw 状态", value: gateway.gatewayStatus?.version ?? "—")
                 if let uptime = gateway.gatewayStatus?.uptime {
                     DetailRow(label: "运行时长", value: formatUptime(uptime))
                 }
@@ -470,7 +443,7 @@ struct SettingsFormContent: View {
     }
 
     private func applyGatewaySettings() {
-        let port = Int(gatewayPort) ?? 18789
+        let port = Int(gatewayPort) ?? 8642
         let normalized = GatewayConnection.normalizeGatewayEndpoint(gatewayHost, fallbackPort: port)
         gatewayHost = normalized.host
         gatewayPort = "\(normalized.port)"
@@ -504,7 +477,7 @@ struct SettingsFormContent: View {
                     if let token = config.token {
                         gatewayToken = token
                     }
-                    autoDiscoverResult = "已获取到网关配置"
+                    autoDiscoverResult = "已获取到 IronClaw 配置"
                     isAutoDiscovering = false
                 }
             } catch {

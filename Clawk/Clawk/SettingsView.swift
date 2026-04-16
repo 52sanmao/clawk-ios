@@ -21,18 +21,21 @@ struct SettingsView: View {
             Form {
                 // Gateway connection
                 Section {
-                    TextField("主机 / WebSocket 地址", text: $gatewayHost)
+                    TextField("IronClaw 地址", text: $gatewayHost)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
 
-                    Text("也支持填写 http:// 或 https:// 控制台地址，应用会自动转换为 ws:// 或 wss://。")
+                    Text("支持填写完整的 http:// 或 https:// IronClaw 地址，并保留路径前缀。")
                         .font(.caption)
                         .foregroundColor(.secondary)
 
                     TextField("端口", text: $gatewayPort)
                         .keyboardType(.numberPad)
 
-                    Text("支持完整的 ws:// 或 wss:// 网关地址，并会保留 /f5gxy9/ 这类路径前缀。")
+                    SecureField("IronClaw Bearer Token（可选）", text: $gatewayToken)
+                        .textInputAutocapitalization(.never)
+
+                    Text("聊天主链路使用 /api/chat/thread/new、/api/chat/send 与 /api/chat/history。")
                         .font(.caption)
                         .foregroundColor(.secondary)
 
@@ -60,9 +63,9 @@ struct SettingsView: View {
                             .foregroundColor(.red)
                     }
                 } header: {
-                    Text("网关（OpenClaw）")
+                    Text("IronClaw")
                 } footer: {
-                    Text("直接连接 OpenClaw Gateway 的 WebSocket 主通道（协议 v3）。")
+                    Text("直接连接 IronClaw 原生 HTTP API，聊天通过线程接口轮询历史结果，不再依赖旧的 /v1/responses 主链路。")
                 }
 
                 // Dashboard connection
@@ -138,7 +141,7 @@ struct SettingsView: View {
                 } header: {
                     Text("配置")
                 } footer: {
-                    Text("从 Dashboard 的 /api/gateway-config 接口拉取网关地址和令牌。")
+                    Text("从 Dashboard 的 /api/gateway-config 接口拉取 IronClaw 地址和令牌。")
                 }
 
                 // Agent identity
@@ -164,7 +167,7 @@ struct SettingsView: View {
                 // Device info
                 Section("设备") {
                     DetailRow(label: "设备令牌", value: String(gateway.publicDeviceToken.prefix(12)) + "...")
-                    DetailRow(label: "网关状态", value: gateway.gatewayStatus?.version ?? "—")
+                    DetailRow(label: "IronClaw 状态", value: gateway.gatewayStatus?.version ?? "—")
                     if let uptime = gateway.gatewayStatus?.uptime {
                         DetailRow(label: "运行时长", value: formatUptime(uptime))
                     }
@@ -201,7 +204,7 @@ struct SettingsView: View {
     }
 
     private func applyGatewaySettings() {
-        let port = Int(gatewayPort) ?? 18789
+        let port = Int(gatewayPort) ?? 8642
         let normalized = GatewayConnection.normalizeGatewayEndpoint(gatewayHost, fallbackPort: port)
         gatewayHost = normalized.host
         gatewayPort = "\(normalized.port)"
@@ -235,7 +238,7 @@ struct SettingsView: View {
                     if let token = config.token {
                         gatewayToken = token
                     }
-                    autoDiscoverResult = "已获取到网关配置"
+                    autoDiscoverResult = "已获取到 IronClaw 配置"
                     isAutoDiscovering = false
                 }
             } catch {

@@ -95,7 +95,7 @@ struct AgentLogsView: View {
     }
 
     private func refreshLogs() {
-        gateway.logsTail(sinceMs: 300000) // Last 5 minutes
+        gateway.logsTail(sinceMs: 300000)
     }
 }
 

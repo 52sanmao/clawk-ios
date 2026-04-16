@@ -4,11 +4,10 @@ import os.log
 
 private let gatewayLog = Logger(subsystem: "com.kishparikh.clawk", category: "Gateway")
 
-// MARK: - OpenClaw Gateway Connection (Protocol v3)
+// MARK: - IronClaw Connection
 
-/// Direct WebSocket connection to OpenClaw Gateway using Protocol v3
-/// Supports full RPC methods: chat, sessions, agents, cron, logs, approvals
-class GatewayConnection: NSObject, ObservableObject {
+/// IronClaw 原生 HTTP 连接层，兼容现有 Clawk 视图所需的数据接口。
+final class GatewayConnection: NSObject, ObservableObject {
     static func normalizeGatewayEndpoint(_ rawValue: String, fallbackPort: Int) -> (host: String, port: Int) {
         let trimmed = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
@@ -17,14 +16,15 @@ class GatewayConnection: NSObject, ObservableObject {
 
         if let components = URLComponents(string: trimmed),
            let scheme = components.scheme?.lowercased() {
-            if scheme == "ws" || scheme == "wss" {
-                return (trimmed, components.port ?? fallbackPort)
+            if scheme == "http" || scheme == "https" {
+                let resolvedPort = components.port ?? (scheme == "https" ? 443 : 80)
+                return (trimmed, resolvedPort)
             }
 
-            if scheme == "http" || scheme == "https" {
+            if scheme == "ws" || scheme == "wss" {
                 var normalized = components
-                normalized.scheme = scheme == "https" ? "wss" : "ws"
-                let resolvedPort = components.port ?? (scheme == "https" ? 443 : 80)
+                normalized.scheme = (scheme == "wss") ? "https" : "http"
+                let resolvedPort = components.port ?? (scheme == "wss" ? 443 : 80)
                 if normalized.path.isEmpty {
                     normalized.path = "/"
                 }
@@ -37,81 +37,45 @@ class GatewayConnection: NSObject, ObservableObject {
         return (trimmed, fallbackPort)
     }
 
-
     // MARK: - Published State
 
     @Published var isConnected = false
     @Published var isConnecting = false
     @Published var connectionError: String?
 
-    // Chat state
     @Published var messages: [GatewayChatMessage] = []
     @Published var thinkingSteps: [GatewayThinkingStep] = []
     @Published var currentSessionId: String?
     @Published var currentSessionKey: String?
+    @Published var previousResponseId: String?
     @Published var isWaitingForResponse = false
     @Published var chatError: String?
-    @Published var chatStatus: String?  // Step-by-step status: "Sending...", "Waiting for agent...", etc.
-    @Published var debugLog: [String] = []  // In-app debug log for gateway events
-    private var responseTimeoutTimer: Timer?
+    @Published var chatStatus: String?
+    @Published var debugLog: [String] = []
 
-    // Agent state
     @Published var agentIdentity: GatewayAgentIdentity?
     @Published var agents: [GatewayAgent] = []
-
-    // Session state
     @Published var sessions: [GatewaySession] = []
-
-    // Cron state
     @Published var cronJobs: [GatewayCronJob] = []
     @Published var cronStatus: GatewayCronStatus?
-
-    // Approval state
     @Published var pendingApprovals: [GatewayApproval] = []
-
-    // Gateway state
     @Published var gatewayStatus: GatewayStatusResponse?
 
-    // Public token accessor
     var publicDeviceToken: String { deviceToken }
-
-    // MARK: - Event Publishers
 
     let eventSubject = PassthroughSubject<(GatewayEventType, [String: Any]), Never>()
     let logSubject = PassthroughSubject<GatewayLogEntry, Never>()
 
-    // MARK: - Private Properties
-
-    private var webSocketTask: URLSessionWebSocketTask?
-    private var urlSession: URLSession?
-    private var reconnectTimer: Timer?
-    private var pendingRequests: [String: PendingRequest] = [:]
-    private let rpcLock = NSLock()
-    private var pendingToolCalls: [String: GatewayToolCall] = [:]
-    private var cancellables = Set<AnyCancellable>()
-    private var connectNonce: String?
-    private var connectSent = false
-    private var autoReconnectBlockedReason: String?
-    private var shouldReconnectOnDisconnect = false
-
-    // Configuration
+    private let urlSession = URLSession(configuration: .default)
+    private var responseTask: Task<Void, Never>?
     private(set) var gatewayHost: String
     private(set) var gatewayPort: Int
     private(set) var gatewayToken: String
     private var deviceToken: String
-    private var tickIntervalMs: Int = 15000
-
-    // MARK: - Initialization
 
     init(host: String? = nil, port: Int? = nil, token: String? = nil) {
-        let cachedHost = UserDefaults.standard.string(forKey: "gatewayHost")
-        if cachedHost == "127.0.0.1" || cachedHost == "localhost" {
-            UserDefaults.standard.removeObject(forKey: "gatewayHost")
-            UserDefaults.standard.removeObject(forKey: "gatewayPort")
-        }
-
-        self.gatewayHost = host ?? UserDefaults.standard.string(forKey: "gatewayHost") ?? "100.96.61.83"
-        self.gatewayPort = port ?? UserDefaults.standard.integer(forKey: "gatewayPort").nonZero ?? 18790
+        self.gatewayHost = host ?? UserDefaults.standard.string(forKey: "gatewayHost") ?? "http://127.0.0.1:8642"
+        self.gatewayPort = port ?? UserDefaults.standard.integer(forKey: "gatewayPort").nonZero ?? 8642
         self.gatewayToken = token ?? UserDefaults.standard.string(forKey: "gatewayToken") ?? ""
         self.deviceToken = UserDefaults.standard.string(forKey: "gatewayDeviceToken") ?? UUID().uuidString
         super.init()
@@ -128,1086 +92,135 @@ class GatewayConnection: NSObject, ObservableObject {
         let entry = "[\(ts)] \(msg)"
         DispatchQueue.main.async {
             self.debugLog.append(entry)
-            if self.debugLog.count > 100 {
+            if self.debugLog.count > 200 {
                 self.debugLog.removeFirst()
             }
         }
-        NSLog("[GW] %@", msg)
+        gatewayLog.debug("\(msg, privacy: .public)")
     }
 
     // MARK: - Connection Management
 
     func connect() {
-        guard !isConnecting && !isConnected else {
-            debugAppend("Connect skipped: isConnecting=\(isConnecting), isConnected=\(isConnected)")
-            return
-        }
+        guard !isConnecting else { return }
 
-        autoReconnectBlockedReason = nil
-        shouldReconnectOnDisconnect = true
+        responseTask?.cancel()
+        connectionError = nil
+        isConnecting = true
+        debugAppend("Connecting to IronClaw…")
 
-        DispatchQueue.main.async {
-            self.isConnecting = true
-            self.connectionError = nil
-        }
-
-        // Support full URL (wss://...) or construct from host:port
-        let urlString: String
-        if gatewayHost.hasPrefix("wss://") || gatewayHost.hasPrefix("ws://") {
-            urlString = gatewayHost
-        } else {
-            urlString = "ws://\(gatewayHost):\(gatewayPort)"
-        }
-        debugAppend("Connecting to \(urlString)...")
-        guard let url = URL(string: urlString) else {
-            DispatchQueue.main.async {
-                self.connectionError = "无效的网关URL"
-                self.isConnecting = false
+        Task {
+            do {
+                let models = try await fetchModels()
+                await MainActor.run {
+                    self.isConnected = true
+                    self.isConnecting = false
+                    self.connectionError = nil
+                    self.agentIdentity = GatewayAgentIdentity(name: "IronClaw", creature: "AI", vibe: "Native", emoji: "🤖", color: "#6B7280")
+                    self.agents = self.makeAgents(from: models)
+                }
+                debugAppend("Connected to IronClaw")
+                await loadInitialData()
+            } catch {
+                let message = userFacingErrorMessage(error.localizedDescription)
+                debugAppend("Connect failed: \(message)")
+                await MainActor.run {
+                    self.isConnected = false
+                    self.isConnecting = false
+                    self.connectionError = message
+                }
             }
-            return
         }
-
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 15
-
-        let originScheme = url.scheme == "wss" ? "https" : "http"
-        if let host = url.host {
-            let port = url.port ?? (url.scheme == "wss" ? 443 : 80)
-            let origin = "\(originScheme)://\(host):\(port)"
-            request.setValue(origin, forHTTPHeaderField: "Origin")
-            debugAppend("Setting Origin header: \(origin)")
-        }
-
-        let config = URLSessionConfiguration.default
-        config.waitsForConnectivity = false  // Don't wait — fail fast so we can show error
-        // Don't set httpAdditionalHeaders — URLSessionWebSocketTask handles upgrade internally
-        urlSession = URLSession(configuration: config, delegate: self, delegateQueue: nil)
-        webSocketTask = urlSession?.webSocketTask(with: request)
-        webSocketTask?.resume()
-        // Receive starts in didOpenWithProtocol delegate — not before socket is open
     }
 
     func disconnect() {
-        shouldReconnectOnDisconnect = false
-        reconnectTimer?.invalidate()
-        reconnectTimer = nil
-        webSocketTask?.cancel(with: .normalClosure, reason: nil)
-
-        // Cancel all pending requests
-        rpcLock.lock()
-        let allPending = pendingRequests
-        pendingRequests.removeAll()
-        callbackRequests.removeAll()
-        rpcLock.unlock()
-        for (_, request) in allPending {
-            request.cancel()
-        }
-        connectSent = false
-        connectNonce = nil
-
-        DispatchQueue.main.async {
-            self.isConnected = false
-            self.isConnecting = false
-        }
+        responseTask?.cancel()
+        responseTask = nil
+        isConnected = false
+        isConnecting = false
+        isWaitingForResponse = false
+        chatStatus = nil
+        debugAppend("Disconnected from IronClaw")
     }
 
     func updateConnection(host: String, port: Int, token: String = "") {
         let normalized = Self.normalizeGatewayEndpoint(host, fallbackPort: port)
         let trimmedToken = token.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        autoReconnectBlockedReason = nil
-
         UserDefaults.standard.set(normalized.host, forKey: "gatewayHost")
         UserDefaults.standard.set(normalized.port, forKey: "gatewayPort")
         UserDefaults.standard.set(trimmedToken, forKey: "gatewayToken")
 
-        self.gatewayHost = normalized.host
-        self.gatewayPort = normalized.port
-        self.gatewayToken = trimmedToken
+        gatewayHost = normalized.host
+        gatewayPort = normalized.port
+        gatewayToken = trimmedToken
 
         disconnect()
         connect()
     }
 
-    private func reconnect() {
-        guard shouldReconnectOnDisconnect else {
-            debugAppend("Reconnect skipped: reconnect disabled")
-            return
-        }
-
-        guard autoReconnectBlockedReason == nil else {
-            debugAppend("Reconnect blocked: \(autoReconnectBlockedReason ?? "unknown")")
-            return
-        }
-
-        reconnectTimer?.invalidate()
-        DispatchQueue.main.async { [weak self] in
-            self?.reconnectTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: false) { [weak self] _ in
-                self?.connect()
-            }
-        }
-    }
-
-    private func clearStoredDeviceToken() {
-        UserDefaults.standard.removeObject(forKey: "gatewayDeviceToken")
-        self.deviceToken = UUID().uuidString
-        UserDefaults.standard.set(self.deviceToken, forKey: "gatewayDeviceToken")
-    }
-
-    private func clearStoredGatewayToken() {
-        UserDefaults.standard.removeObject(forKey: "gatewayToken")
-        self.gatewayToken = ""
-    }
-
-    private func isDeviceTokenIssue(_ message: String) -> Bool {
-        let normalized = message.lowercased()
-        return normalized.contains("device token") ||
-               normalized.contains("device not linked") ||
-               normalized.contains("not linked") ||
-               normalized.contains("not paired") ||
-               normalized.contains("missing scope")
-    }
-
-    private func shouldBlockAutoReconnect(for message: String) -> Bool {
-        let normalized = message.lowercased()
-        return normalized.contains("token missing") ||
-               normalized.contains("token invalid") ||
-               normalized.contains("unauthorized") ||
-               normalized.contains("origin not allowed") ||
-               normalized.contains("origin missing or invalid") ||
-               normalized.contains("invalid url") ||
-               normalized.contains("unsupported url")
-    }
-
-    private func userFacingErrorMessage(_ message: String) -> String {
-        let normalized = message.lowercased()
-
-        if normalized.contains("missing scope: operator.write") {
-            return "当前令牌没有发送消息权限（缺少 operator.write）。请更换具有写权限的网关令牌，或重新配对设备。"
-        }
-        if normalized.contains("missing scope: operator.read") {
-            return "当前令牌只有部分权限，缺少读取权限（operator.read）。请更换完整权限的网关令牌，或重新配对设备。"
-        }
-        if normalized.contains("token missing") || normalized.contains("token invalid") || normalized.contains("unauthorized") {
-            return "网关令牌缺失、无效，或当前设备未被授权。请检查令牌后重试。"
-        }
-        if normalized.contains("origin not allowed") || normalized.contains("origin missing or invalid") {
-            return "当前地址来源未被网关允许。请检查网关地址、协议和路径前缀是否正确。"
-        }
-        if normalized.contains("device token") || normalized.contains("not linked") || normalized.contains("not paired") {
-            return "当前设备令牌已失效或尚未配对，请重新配对或改用有效的网关令牌。"
-        }
-        if normalized.contains("invalid url") || normalized.contains("unsupported url") {
-            return "网关地址格式无效。请填写正确的 ws://、wss:// 或控制台 URL。"
-        }
-
-        return message
-    }
-
-    private func handleHandshakeFailure(_ error: Error) {
-        let description = error.localizedDescription
-
-        if isDeviceTokenIssue(description) {
-            debugAppend("Clearing stored device token due to handshake failure: \(description)")
-            clearStoredDeviceToken()
-        }
-
-        if shouldBlockAutoReconnect(for: description) {
-            autoReconnectBlockedReason = description
-            shouldReconnectOnDisconnect = false
-            if description.lowercased().contains("token missing") ||
-                description.lowercased().contains("token invalid") ||
-                description.lowercased().contains("unauthorized") {
-                clearStoredGatewayToken()
-            }
-            debugAppend("Blocking auto reconnect after handshake failure: \(description)")
-        }
-
-        DispatchQueue.main.async {
-            self.connectionError = self.userFacingErrorMessage(description)
-            self.isConnected = false
-            self.isConnecting = false
-        }
-    }
-
-    private func handleTransportFailure(_ description: String) {
-        let normalized = description.lowercased()
-        if normalized.contains("cancelled") && !shouldReconnectOnDisconnect {
-            debugAppend("Ignoring cancellation after manual disconnect")
-            return
-        }
-
-        DispatchQueue.main.async {
-            self.isConnected = false
-            self.isConnecting = false
-            self.connectionError = self.userFacingErrorMessage(description)
-        }
-
-        if shouldBlockAutoReconnect(for: description) {
-            autoReconnectBlockedReason = description
-            shouldReconnectOnDisconnect = false
-            debugAppend("Blocking auto reconnect after transport failure: \(description)")
-            return
-        }
-
-        reconnect()
-    }
-
-    // MARK: - Protocol v3 Handshake
-
-    private func performHandshake() {
-        guard !connectSent else { return }
-        connectSent = true
-
-        let trimmedGatewayToken = gatewayToken.trimmingCharacters(in: .whitespacesAndNewlines)
-        let savedDeviceToken = UserDefaults.standard.string(forKey: "gatewayDeviceToken")?.trimmingCharacters(in: .whitespacesAndNewlines)
-        let authToken = trimmedGatewayToken.isEmpty ? (savedDeviceToken ?? "") : trimmedGatewayToken
-
-        var params: [String: Any] = [
-            "minProtocol": 3,
-            "maxProtocol": 3,
-            "client": [
-                "id": "openclaw-ios",
-                "displayName": "Clawk iOS",
-                "version": "2.0",
-                "platform": "ios",
-                "mode": "ui"
-            ] as [String: Any],
-            "role": "operator",
-            "scopes": ["operator.read", "operator.write", "operator.admin", "operator.approvals"],
-            "caps": ["tool-events"] as [String]
-        ]
-
-        if !authToken.isEmpty {
-            params["auth"] = ["token": authToken]
-        }
-
-        let tokenPrefix = String(authToken.prefix(8))
-        print("[Gateway] Sending connect request, token=\(authToken.isEmpty ? "NONE" : tokenPrefix + "..."), host=\(gatewayHost), nonce=\(connectNonce ?? "nil")")
-
-        sendRequest(method: "connect", params: params) { [weak self] result in
-            DispatchQueue.main.async {
-                switch result {
-                case .success(let payload):
-                    print("[Gateway] Connect succeeded!")
-                    // Extract device token from response
-                    if let auth = payload["auth"] as? [String: Any],
-                       let newToken = auth["deviceToken"] as? String {
-                        self?.deviceToken = newToken
-                        UserDefaults.standard.set(newToken, forKey: "gatewayDeviceToken")
-                    }
-
-                    // Extract tick interval
-                    if let policy = payload["policy"] as? [String: Any],
-                       let tick = policy["tickIntervalMs"] as? Int {
-                        self?.tickIntervalMs = tick
-                    }
-
-                    self?.isConnected = true
-                    self?.isConnecting = false
-                    self?.connectionError = nil
-
-                    // Load initial data
-                    self?.loadInitialData()
-
-                case .failure(let error):
-                    print("[Gateway] Connect failed: \(error)")
-                    self?.handleHandshakeFailure(error)
-                }
-            }
-        }
-    }
-
-    private func loadInitialData() {
-        Task {
-            // Load agents and cron in parallel
-            async let agentsResult: () = loadAgents()
-            async let cronResult: () = loadCronJobs()
-            async let identityResult: () = loadAgentIdentity()
-            _ = await (agentsResult, cronResult, identityResult)
-        }
-    }
-
-    private func loadAgents() async {
-        do {
-            let agents = try await agentsList()
-            print("[Gateway] Loaded \(agents.count) agents: \(agents.map { $0.id })")
-            await MainActor.run { self.agents = agents }
-        } catch {
-            print("[Gateway] Failed to load agents: \(error)")
-        }
-    }
-
-    private func loadCronJobs() async {
-        do {
-            let jobs = try await cronList()
-            print("[Gateway] Loaded \(jobs.count) cron jobs: \(jobs.map { $0.displayName })")
-            await MainActor.run { self.cronJobs = jobs }
-        } catch {
-            print("[Gateway] Failed to load cron jobs: \(error)")
-        }
-    }
-
-    private func loadAgentIdentity() async {
-        do {
-            let identity = try await getAgentIdentity()
-            print("[Gateway] Agent identity: \(identity.name) \(identity.emoji)")
-            await MainActor.run { self.agentIdentity = identity }
-        } catch {
-            print("[Gateway] Failed to load agent identity: \(error)")
-        }
-    }
-
-    // MARK: - RPC Infrastructure
-
-    private func nextRequestId() -> String {
-        UUID().uuidString.lowercased()
-    }
-
-    /// Send an RPC request and get the response via callback
-    private func sendRequest(method: String, params: [String: Any] = [:], completion: @escaping (Result<[String: Any], Error>) -> Void) {
-        let id = nextRequestId()
-
-        let frame: [String: Any] = [
-            "type": "req",
-            "id": id,
-            "method": method,
-            "params": params
-        ]
-
-        let pendingReq = CallbackRequest(completion: completion)
-        rpcLock.lock()
-        callbackRequests[id] = pendingReq
-        rpcLock.unlock()
-
-        sendJSON(frame)
-
-        // Timeout after 30 seconds
-        DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
-            guard let self = self else { return }
-            self.rpcLock.lock()
-            let req = self.callbackRequests.removeValue(forKey: id)
-            self.rpcLock.unlock()
-            req?.completion(.failure(GatewayError.timeout))
-        }
-    }
-
-    /// Async/await version of RPC call
-    func rpc(method: String, params: [String: Any] = [:]) async throws -> [String: Any] {
-        guard isConnected || method == "connect" else {
-            throw GatewayError.notConnected
-        }
-
-        return try await withCheckedThrowingContinuation { continuation in
-            let id = nextRequestId()
-            let pending = PendingRequest(id: id, method: method, continuation: continuation)
-
-            rpcLock.lock()
-            pendingRequests[id] = pending
-            rpcLock.unlock()
-
-            let frame: [String: Any] = [
-                "type": "req",
-                "id": id,
-                "method": method,
-                "params": params
-            ]
-            sendJSON(frame)
-
-            // Timeout after 30 seconds
-            DispatchQueue.main.asyncAfter(deadline: .now() + 30) { [weak self] in
-                guard let self = self else { return }
-                self.rpcLock.lock()
-                let req = self.pendingRequests.removeValue(forKey: id)
-                self.rpcLock.unlock()
-                req?.cancel()
-            }
-        }
-    }
-
-    private var callbackRequests: [String: CallbackRequest] = [:]
-
-    private class CallbackRequest {
-        let completion: (Result<[String: Any], Error>) -> Void
-        init(completion: @escaping (Result<[String: Any], Error>) -> Void) {
-            self.completion = completion
-        }
-    }
-
-    // MARK: - WebSocket Send/Receive
-
-    private func sendJSON(_ json: [String: Any]) {
-        guard let data = try? JSONSerialization.data(withJSONObject: json),
-              let text = String(data: data, encoding: .utf8) else { return }
-
-        webSocketTask?.send(.string(text)) { error in
-            if let error = error {
-                print("[Gateway] Send error: \(error)")
-            }
-        }
-    }
-
-    private func receiveMessage() {
-        webSocketTask?.receive { [weak self] result in
-            switch result {
-            case .success(let message):
-                self?.handleWebSocketMessage(message)
-                self?.receiveMessage()
-            case .failure(let error):
-                print("[Gateway] Receive error: \(error)")
-                self?.handleTransportFailure(error.localizedDescription)
-            }
-        }
-    }
-
-    private func handleWebSocketMessage(_ message: URLSessionWebSocketTask.Message) {
-        guard case .string(let text) = message,
-              let data = text.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let type = json["type"] as? String else {
-            if case .string(let text) = message {
-                gatewayLog.warning("Unparseable frame: \(text.prefix(200))")
-            }
-            return
-        }
-
-        // Log non-tick frames for debugging
-        if type != "event" || (json["event"] as? String) != "tick" {
-            let method = json["method"] as? String ?? json["event"] as? String ?? ""
-            NSLog("[Gateway] Frame: type=%@ %@", type, method)
-        }
-
-        switch type {
-        case "req":
-            handleServerRequest(json)
-        case "res":
-            handleResponse(json)
-        case "event":
-            handleEvent(json)
-        case "hello-ok":
-            // Direct hello-ok response (alternative to type: "res")
-            handleHelloOk(json)
-        default:
-            handleLegacyMessage(json)
-        }
-    }
-
-    private func handleHelloOk(_ json: [String: Any]) {
-        print("[Gateway] Received direct hello-ok")
-        DispatchQueue.main.async { [weak self] in
-            if let auth = json["auth"] as? [String: Any],
-               let newToken = auth["deviceToken"] as? String {
-                self?.deviceToken = newToken
-                UserDefaults.standard.set(newToken, forKey: "gatewayDeviceToken")
-            }
-            if let policy = json["policy"] as? [String: Any],
-               let tick = policy["tickIntervalMs"] as? Int {
-                self?.tickIntervalMs = tick
-            }
-            self?.isConnected = true
-            self?.isConnecting = false
-            self?.connectionError = nil
-            self?.loadInitialData()
-
-            // Resolve any pending connect callback
-            self?.rpcLock.lock()
-            let callbacks = self?.callbackRequests ?? [:]
-            self?.callbackRequests.removeAll()
-            self?.rpcLock.unlock()
-            for (_, callback) in callbacks {
-                callback.completion(.success(json))
-            }
-        }
-    }
-
-    // MARK: - Response Handling
-
-    private func handleResponse(_ json: [String: Any]) {
-        // Support both string and int IDs
-        let id: String
-        if let strId = json["id"] as? String {
-            id = strId
-        } else if let intId = json["id"] as? Int {
-            id = "\(intId)"
-        } else {
-            return
-        }
-        let ok = json["ok"] as? Bool ?? false
-        let payload = json["payload"] as? [String: Any] ?? [:]
-
-        // Check async pending requests first
-        rpcLock.lock()
-        let pending = pendingRequests.removeValue(forKey: id)
-        rpcLock.unlock()
-
-        if let pending = pending {
-            if ok {
-                pending.resume(with: payload)
-            } else {
-                let errorInfo = json["error"] as? [String: Any] ?? [:]
-                let code = errorInfo["code"] as? String ?? "UNKNOWN"
-                let message = errorInfo["message"] as? String ?? "未知错误"
-                pending.fail(with: GatewayError.from(code: code, message: message))
-            }
-            return
-        }
-
-        // Check callback requests
-        rpcLock.lock()
-        let callback = callbackRequests.removeValue(forKey: id)
-        rpcLock.unlock()
-
-        if let callback = callback {
-            if ok {
-                callback.completion(.success(payload))
-            } else {
-                let errorInfo = json["error"] as? [String: Any] ?? [:]
-                let code = errorInfo["code"] as? String ?? "UNKNOWN"
-                let message = errorInfo["message"] as? String ?? "未知错误"
-                callback.completion(.failure(GatewayError.from(code: code, message: message)))
-            }
-        }
-    }
-
-    // MARK: - Event Handling
-
-    private func handleEvent(_ json: [String: Any]) {
-        guard let eventName = json["event"] as? String else { return }
-        let payload = json["payload"] as? [String: Any] ?? [:]
-
-        // Handle connect.challenge before dispatching to event system
-        if eventName == "connect.challenge" {
-            let nonce = payload["nonce"] as? String
-            print("[Gateway] Received connect.challenge, nonce=\(nonce ?? "nil")")
-            connectNonce = nonce
-            // Re-send connect with the nonce if we already sent one
-            if connectSent {
-                connectSent = false
-                performHandshake()
-            }
-            return
-        }
-
-        let eventType = GatewayEventType(rawValue: eventName)
-
-        DispatchQueue.main.async { [weak self] in
-            self?.eventSubject.send((eventType, payload))
-
-            if eventType != .tick {
-                self?.debugAppend("Event: \(eventName), keys: \(Array(payload.keys).joined(separator: ","))")
-            }
-
-            switch eventType {
-            case .tick:
-                break // Keepalive, no action needed
-            case .agent:
-                self?.handleAgentEvent(payload)
-            case .chat:
-                // Gateway sends "chat" events with state: "delta", "final", "error"
-                self?.handleChatEvent(payload)
-            case .chatFinal:
-                self?.handleChatFinal(payload)
-            case .lifecycleStart:
-                // Agent started executing — clear waiting, show thinking
-                if self?.isWaitingForResponse == true {
-                    self?.isWaitingForResponse = false
-                    self?.chatError = nil
-                    self?.cancelResponseTimeout()
-                }
-            case .lifecycleEnd:
-                self?.isWaitingForResponse = false
-                self?.cancelResponseTimeout()
-                self?.thinkingSteps.removeAll()
-            case .cronAdded, .cronUpdated, .cronStarted, .cronFinished, .cronRemoved:
-                self?.handleCronEvent(eventType, payload: payload)
-            case .approvalRequested:
-                self?.handleApprovalEvent(payload)
-            case .presence:
-                break
-            case .shutdown:
-                self?.connectionError = "网关正在关闭"
-                self?.isConnected = false
-            case .unknown:
-                gatewayLog.debug("Unknown event: \(eventName)")
-                break
-            }
-        }
-    }
-
-    private func handleAgentEvent(_ payload: [String: Any]) {
-        guard let agentEventType = payload["type"] as? String else {
-            debugAppend("agent event missing 'type', keys: \(Array(payload.keys))")
-            return
-        }
-        debugAppend("Agent event: \(agentEventType)")
-
-        // Any agent event means we got a response — clear waiting state
-        if isWaitingForResponse {
-            isWaitingForResponse = false
-            chatError = nil
-            chatStatus = "代理响应中..."
-            cancelResponseTimeout()
-        }
-
-        switch agentEventType {
-        case "text_delta", "text":
-            let delta = payload["text"] as? String ?? payload["delta"] as? String ?? ""
-            appendToCurrentMessage(delta: delta)
-
-        case "thinking":
-            let content = payload["content"] as? String ?? payload["text"] as? String ?? ""
-            let id = payload["id"] as? String ?? UUID().uuidString
-            let step = GatewayThinkingStep(id: id, content: content, timestamp: Date(), type: .thinking)
-            if let index = thinkingSteps.firstIndex(where: { $0.id == id }) {
-                thinkingSteps[index] = step
-            } else {
-                thinkingSteps.append(step)
-            }
-
-        case "tool_use", "tool_call":
-            let id = payload["id"] as? String ?? UUID().uuidString
-            let name = payload["name"] as? String ?? "unknown"
-            let args = payload["arguments"] as? [String: Any] ?? payload["input"] as? [String: Any] ?? [:]
-            let toolCall = GatewayToolCall(id: id, name: name, arguments: args)
-            pendingToolCalls[id] = toolCall
-
-            let step = GatewayThinkingStep(id: id, content: "正在使用 \(name)...", timestamp: Date(), type: .toolCall, toolName: name)
-            thinkingSteps.append(step)
-
-        case "tool_result":
-            let toolCallId = payload["toolCallId"] as? String ?? payload["tool_use_id"] as? String ?? ""
-            let status = payload["status"] as? String ?? "ok"
-            let duration = payload["durationMs"] as? Int
-
-            if let index = thinkingSteps.firstIndex(where: { $0.id == toolCallId }) {
-                var step = thinkingSteps[index]
-                step = GatewayThinkingStep(
-                    id: toolCallId,
-                    content: step.content,
-                    timestamp: step.timestamp,
-                    type: .toolResult,
-                    toolName: step.toolName,
-                    status: status,
-                    durationMs: duration
-                )
-                thinkingSteps[index] = step
-            }
-            pendingToolCalls.removeValue(forKey: toolCallId)
-
-        case "message":
-            // Complete message in one event
-            if let content = payload["content"] as? String {
-                let id = payload["id"] as? String ?? UUID().uuidString
-                let role = payload["role"] as? String ?? "assistant"
-                let msg = GatewayChatMessage(id: id, role: role, content: content, isStreaming: false)
-                if let index = messages.firstIndex(where: { $0.id == id }) {
-                    messages[index] = msg
-                } else {
-                    messages.append(msg)
-                }
-                thinkingSteps.removeAll()
-            }
-
-        case "identity":
-            agentIdentity = GatewayAgentIdentity(
-                name: payload["name"] as? String ?? "助手",
-                creature: payload["creature"] as? String ?? "AI",
-                vibe: payload["vibe"] as? String,
-                emoji: payload["emoji"] as? String ?? "🤖",
-                color: payload["color"] as? String ?? "#6B7280"
-            )
-
-        default:
-            break
-        }
-    }
-
-    private func appendToCurrentMessage(delta: String) {
-        isWaitingForResponse = false
-        chatError = nil
-        cancelResponseTimeout()
-        if let lastIndex = messages.indices.last,
-           messages[lastIndex].role == "assistant" && messages[lastIndex].isStreaming {
-            messages[lastIndex] = GatewayChatMessage(
-                id: messages[lastIndex].id,
-                role: "assistant",
-                content: messages[lastIndex].content + delta,
-                timestamp: messages[lastIndex].timestamp,
-                thinking: messages[lastIndex].thinking,
-                isStreaming: true
-            )
-        } else {
-            let msg = GatewayChatMessage(
-                id: UUID().uuidString,
-                role: "assistant",
-                content: delta,
-                isStreaming: true
-            )
-            messages.append(msg)
-        }
-    }
-
-    /// Replace current streaming message content with full text (for chat delta events)
-    private func replaceCurrentMessage(fullText: String) {
-        if let lastIndex = messages.indices.last,
-           messages[lastIndex].role == "assistant" && messages[lastIndex].isStreaming {
-            messages[lastIndex] = GatewayChatMessage(
-                id: messages[lastIndex].id,
-                role: "assistant",
-                content: fullText,
-                timestamp: messages[lastIndex].timestamp,
-                thinking: messages[lastIndex].thinking,
-                isStreaming: true
-            )
-        } else {
-            let msg = GatewayChatMessage(
-                id: UUID().uuidString,
-                role: "assistant",
-                content: fullText,
-                isStreaming: true
-            )
-            messages.append(msg)
-        }
-    }
-
-    /// Handle "chat" events from gateway — state can be "delta", "final", or "error"
-    private func handleChatEvent(_ payload: [String: Any]) {
-        let state = payload["state"] as? String ?? "unknown"
-        let runId = payload["runId"] as? String
-        debugAppend("chat event: state=\(state), runId=\(runId ?? "nil")")
-
-        switch state {
-        case "delta":
-            // Streaming text delta — content is FULL accumulated text (not incremental)
-            if let message = payload["message"] as? [String: Any] {
-                let fullText: String
-                if let contentBlocks = message["content"] as? [[String: Any]] {
-                    fullText = contentBlocks.compactMap { block -> String? in
-                        if block["type"] as? String == "text" { return block["text"] as? String }
-                        return nil
-                    }.joined(separator: "\n")
-                } else if let contentStr = message["content"] as? String {
-                    fullText = contentStr
-                } else {
-                    return
-                }
-
-                isWaitingForResponse = false
-                chatError = nil
-                chatStatus = "流式传输中..."
-                cancelResponseTimeout()
-                replaceCurrentMessage(fullText: fullText)
-            }
-
-        case "final":
-            // Final complete response
-            handleChatFinal(payload)
-
-        case "error":
-            // Error response
-            let errorMsg = payload["errorMessage"] as? String ?? "代理错误"
-            let userMessage = userFacingErrorMessage(errorMsg)
-            debugAppend("chat error: \(errorMsg)")
-            isWaitingForResponse = false
-            chatStatus = nil
-            chatError = userMessage
-            cancelResponseTimeout()
-
-        default:
-            debugAppend("Unknown chat state: \(state)")
-        }
-    }
-
-    private func handleChatFinal(_ payload: [String: Any]) {
-        debugAppend("chat:final received")
-        isWaitingForResponse = false
-        chatError = nil
-        chatStatus = nil
-        cancelResponseTimeout()
-        if let message = payload["message"] as? [String: Any] {
-            let id = message["id"] as? String ?? messages.last?.id ?? UUID().uuidString
-            let role = message["role"] as? String ?? "assistant"
-
-            // Content can be a string OR an array of blocks [{ type: "text", text: "..." }]
-            let content: String
-            if let contentStr = message["content"] as? String {
-                content = contentStr
-            } else if let contentBlocks = message["content"] as? [[String: Any]] {
-                content = contentBlocks.compactMap { block -> String? in
-                    if block["type"] as? String == "text" {
-                        return block["text"] as? String
-                    }
-                    return nil
-                }.joined(separator: "\n")
-            } else {
-                content = messages.last?.content ?? ""
-            }
-
-            let finalMsg = GatewayChatMessage(id: id, role: role, content: content, isStreaming: false)
-            if let index = messages.firstIndex(where: { $0.id == id }) {
-                messages[index] = finalMsg
-            } else if let lastIndex = messages.indices.last, messages[lastIndex].isStreaming {
-                // Mark current streaming message as final with updated content
-                messages[lastIndex] = GatewayChatMessage(
-                    id: messages[lastIndex].id,
-                    role: messages[lastIndex].role,
-                    content: content.isEmpty ? messages[lastIndex].content : content,
-                    timestamp: messages[lastIndex].timestamp,
-                    isStreaming: false
-                )
-            } else if !content.isEmpty {
-                // No streaming message exists — add as new message
-                messages.append(finalMsg)
-            }
-        } else if let lastIndex = messages.indices.last, messages[lastIndex].isStreaming {
-            // No message in payload but we have a streaming message — mark it as done
-            messages[lastIndex] = GatewayChatMessage(
-                id: messages[lastIndex].id,
-                role: messages[lastIndex].role,
-                content: messages[lastIndex].content,
-                timestamp: messages[lastIndex].timestamp,
-                isStreaming: false
-            )
-        }
-        thinkingSteps.removeAll()
-    }
-
-    private func handleCronEvent(_ eventType: GatewayEventType, payload: [String: Any]) {
-        // Refresh cron jobs list on any cron event
-        Task {
-            await loadCronJobs()
-        }
-    }
-
-    private func handleApprovalEvent(_ payload: [String: Any]) {
-        let approval = GatewayApproval(
-            id: payload["id"] as? String ?? UUID().uuidString,
-            command: payload["command"] as? String,
-            tool: payload["tool"] as? String,
-            arguments: payload["arguments"] as? [String: String],
-            context: payload["context"] as? String,
-            requestedAt: payload["requestedAt"] as? String,
-            status: "pending"
-        )
-        pendingApprovals.append(approval)
-    }
-
-    private func handleServerRequest(_ json: [String: Any]) {
-        // Handle server-initiated requests
-        guard let method = json["method"] as? String else { return }
-        print("[Gateway] Server request: \(method)")
-
-        // Respond to any server requests
-        let id = json["id"]
-        if id != nil {
-            let response: [String: Any] = ["type": "res", "id": id!, "ok": true, "payload": [:] as [String: Any]]
-            sendJSON(response)
-        }
-    }
-
-    private func handleLegacyMessage(_ json: [String: Any]) {
-        // Handle old-style messages for backward compatibility
-        guard let type = json["type"] as? String else { return }
-
-        DispatchQueue.main.async { [weak self] in
-            switch type {
-            case "hello":
-                self?.connectSent = false
-                self?.performHandshake()
-            case "message":
-                self?.handleLegacyChatMessage(json)
-            case "thinking":
-                let id = json["id"] as? String ?? UUID().uuidString
-                let content = json["content"] as? String ?? ""
-                let step = GatewayThinkingStep(id: id, content: content, timestamp: Date(), type: .thinking)
-                if let index = self?.thinkingSteps.firstIndex(where: { $0.id == id }) {
-                    self?.thinkingSteps[index] = step
-                } else {
-                    self?.thinkingSteps.append(step)
-                }
-            case "toolCall":
-                let id = json["id"] as? String ?? UUID().uuidString
-                let name = json["name"] as? String ?? "unknown"
-                let toolCall = GatewayToolCall(id: id, name: name, arguments: json["arguments"] as? [String: Any] ?? [:])
-                self?.pendingToolCalls[id] = toolCall
-                let step = GatewayThinkingStep(id: id, content: "正在使用 \(name)...", timestamp: Date(), type: .toolCall, toolName: name)
-                self?.thinkingSteps.append(step)
-            case "toolResult":
-                let toolCallId = json["toolCallId"] as? String ?? ""
-                let status = json["status"] as? String ?? "ok"
-                let duration = json["durationMs"] as? Int
-                if let self = self, let index = self.thinkingSteps.firstIndex(where: { $0.id == toolCallId }) {
-                    let existing = self.thinkingSteps[index]
-                    self.thinkingSteps[index] = GatewayThinkingStep(
-                        id: toolCallId, content: existing.content, timestamp: existing.timestamp,
-                        type: .toolResult, toolName: existing.toolName, status: status, durationMs: duration
-                    )
-                }
-                self?.pendingToolCalls.removeValue(forKey: toolCallId)
-            case "identity":
-                self?.agentIdentity = GatewayAgentIdentity(
-                    name: json["name"] as? String ?? "助手",
-                    creature: json["creature"] as? String ?? "AI",
-                    vibe: json["vibe"] as? String,
-                    emoji: json["emoji"] as? String ?? "🤖",
-                    color: json["color"] as? String ?? "#6B7280"
-                )
-            case "error":
-                self?.connectionError = json["message"] as? String
-            default:
-                break
-            }
-        }
-    }
-
-    private func handleLegacyChatMessage(_ json: [String: Any]) {
-        guard let id = json["id"] as? String,
-              let role = json["role"] as? String,
-              let content = json["content"] as? String else { return }
-
-        let msg = GatewayChatMessage(
-            id: id, role: role, content: content,
-            thinking: json["thinking"] as? String,
-            isStreaming: json["streaming"] as? Bool ?? false
-        )
-
-        if let index = messages.firstIndex(where: { $0.id == id }) {
-            messages[index] = msg
-        } else {
-            messages.append(msg)
-        }
-
-        if !(json["streaming"] as? Bool ?? false) {
-            thinkingSteps.removeAll()
-        }
+    private func loadInitialData() async {
+        async let sessionsTask: Void = loadSessions()
+        async let cronTask: Void = loadCronJobs()
+        async let healthTask: Void = loadHealthStatus()
+        async let approvalsTask: Void = loadApprovals()
+        _ = await (sessionsTask, cronTask, healthTask, approvalsTask)
     }
 
     // MARK: - Chat Methods
 
     func sendMessage(_ content: String, sessionKey: String? = nil) {
-        // Add user message locally immediately
-        let userMsg = GatewayChatMessage(id: UUID().uuidString, role: "user", content: content)
-        DispatchQueue.main.async {
-            self.messages.append(userMsg)
-            self.isWaitingForResponse = true
-            self.chatError = nil
-            self.chatStatus = "发送中..."
-            self.startResponseTimeout()
-        }
-        debugAppend("sendMessage: \(content.prefix(60))...")
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
 
-        // Resolve session key: explicit param > current session key > generate new one
-        let resolvedKey = sessionKey ?? currentSessionKey ?? "agent:main:ios:dm:clawk-\(Int(Date().timeIntervalSince1970 * 1000))"
+        messages.append(GatewayChatMessage(role: "user", content: trimmed))
+        isWaitingForResponse = true
+        chatError = nil
+        chatStatus = "发送中..."
+        thinkingSteps.removeAll()
 
-        // Gateway expects { sessionKey, message, idempotencyKey }
-        let idempotencyKey = "clawk-\(Int(Date().timeIntervalSince1970 * 1000))-\(UUID().uuidString.prefix(6))"
-        let params: [String: Any] = [
-            "sessionKey": resolvedKey,
-            "message": content,
-            "idempotencyKey": idempotencyKey
-        ]
-
-        debugAppend("RPC chat.send → sessionKey=\(resolvedKey)")
-
-        Task {
-            do {
-                let result = try await rpc(method: "chat.send", params: params)
-                let resultKeys = Array(result.keys).joined(separator: ",")
-                debugAppend("chat.send OK → keys: \(resultKeys)")
-                // Track the session key for subsequent messages
-                await MainActor.run {
-                    self.chatStatus = "等待代理响应..."
-                    if self.currentSessionKey == nil {
-                        self.currentSessionKey = resolvedKey
-                    }
-                    // Extract session ID if returned
-                    if let sessionId = result["sessionId"] as? String ?? result["resolvedSessionId"] as? String {
-                        self.currentSessionId = sessionId
-                    }
-                }
-            } catch {
-                let isTimeout: Bool
-                if let gwError = error as? GatewayError, case .timeout = gwError {
-                    isTimeout = true
-                } else {
-                    isTimeout = false
-                }
-
-                if isTimeout {
-                    // RPC timeout is OK — the gateway may hold the RPC open while the agent works.
-                    // Events stream independently. The response timeout timer handles the "no events" case.
-                    debugAppend("chat.send RPC timed out (30s) — still waiting for events")
-                    await MainActor.run {
-                        self.chatStatus = "代理处理中（RPC超时，等待事件）..."
-                    }
-                } else {
-                    // Real errors (NOT_LINKED, UNAVAILABLE, etc.) — show to user immediately
-                    debugAppend("chat.send FAILED: \(error.localizedDescription)")
-                    await MainActor.run {
-                        // Only show error if we haven't already received events
-                        if self.isWaitingForResponse {
-                            self.isWaitingForResponse = false
-                            self.cancelResponseTimeout()
-                            self.chatStatus = nil
-                            self.chatError = "发送失败：\(self.userFacingErrorMessage(error.localizedDescription))"
-                        }
-                    }
-                }
-            }
+        let requestedThreadId = sessionKey ?? currentSessionKey ?? currentSessionId
+        responseTask?.cancel()
+        responseTask = Task { [weak self] in
+            guard let self else { return }
+            await self.sendThreadMessage(trimmed, requestedThreadId: requestedThreadId)
         }
     }
 
-    private func startResponseTimeout() {
-        responseTimeoutTimer?.invalidate()
-        responseTimeoutTimer = Timer.scheduledTimer(withTimeInterval: 15, repeats: false) { [weak self] _ in
-            DispatchQueue.main.async {
-                guard let self = self, self.isWaitingForResponse else { return }
-                self.isWaitingForResponse = false
-                self.chatStatus = nil
-                self.chatError = "代理无响应（15秒超时）。请检查调试日志（🐜）了解详情。"
-                self.debugAppend("TIMEOUT: No agent/chat events received within 15s")
-            }
-        }
-    }
-
-    private func cancelResponseTimeout() {
-        responseTimeoutTimer?.invalidate()
-        responseTimeoutTimer = nil
-    }
-
-    /// Start a new chat session, clearing messages and resetting the session key
     func startNewChat(agentId: String = "main") {
-        cancelResponseTimeout()
-        DispatchQueue.main.async {
-            self.messages.removeAll()
-            self.thinkingSteps.removeAll()
-            self.currentSessionKey = nil
-            self.currentSessionId = nil
-            self.isWaitingForResponse = false
-            self.chatError = nil
-        }
+        responseTask?.cancel()
+        messages.removeAll()
+        thinkingSteps.removeAll()
+        currentSessionKey = nil
+        currentSessionId = nil
+        previousResponseId = nil
+        isWaitingForResponse = false
+        chatError = nil
+        chatStatus = nil
     }
 
-    /// Switch to an existing session by key or ID
     func switchToSession(_ session: GatewaySession) {
-        DispatchQueue.main.async {
-            self.messages.removeAll()
-            self.thinkingSteps.removeAll()
-            self.currentSessionKey = session.sessionKey
-            self.currentSessionId = session.id
+        responseTask?.cancel()
+        messages.removeAll()
+        thinkingSteps.removeAll()
+        currentSessionKey = session.sessionKey ?? session.id
+        currentSessionId = session.id
+        previousResponseId = nil
+        isWaitingForResponse = false
+        chatError = nil
+        chatStatus = nil
+
+        guard isLikelyThreadID(session.id) else { return }
+        Task {
+            try? await loadThreadHistoryIntoMessages(session.id)
         }
     }
 
-    /// Load messages from dashboard API session messages
     func loadMessages(from sessionMessages: [SessionMessage]) {
         let chatMessages = sessionMessages.compactMap { msg -> GatewayChatMessage? in
             let content = msg.content.trimmingCharacters(in: .whitespacesAndNewlines)
-            // Skip empty messages, tool-only messages, and system commands
             guard !content.isEmpty,
-                  (msg.role == "user" || msg.role == "assistant"),
-                  !content.hasPrefix("<local-command"),
-                  !content.hasPrefix("<command-"),
-                  msg.toolCalls == nil || !content.isEmpty else { return nil }
+                  msg.role == "user" || msg.role == "assistant" else { return nil }
             return GatewayChatMessage(
                 id: msg.id,
                 role: msg.role,
@@ -1215,185 +228,191 @@ class GatewayConnection: NSObject, ObservableObject {
                 isStreaming: false
             )
         }
+
         DispatchQueue.main.async {
             self.messages = chatMessages
         }
-        print("[Gateway] Loaded \(chatMessages.count) displayable messages from \(sessionMessages.count) total")
+        debugAppend("Loaded \(chatMessages.count) messages from dashboard history")
     }
 
     func chatAbort() async throws {
-        let _ = try await rpc(method: "chat.abort")
+        responseTask?.cancel()
+        await MainActor.run {
+            self.isWaitingForResponse = false
+            self.chatStatus = nil
+        }
     }
 
     func chatHistory(sessionId: String? = nil, sessionKey: String? = nil) async throws -> [[String: Any]] {
-        var params: [String: Any] = [:]
-        if let sessionKey = sessionKey ?? currentSessionKey {
-            params["sessionKey"] = sessionKey
+        let resolved = sessionKey ?? currentSessionKey ?? sessionId ?? currentSessionId
+        guard let resolved else { return [] }
+
+        if isLikelyThreadID(resolved) {
+            let history = try await fetchThreadHistory(threadId: resolved)
+            return history.turns.flatMap { turn -> [[String: Any]] in
+                var rows: [[String: Any]] = []
+                let user = turn.userInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !user.isEmpty {
+                    rows.append(["role": "user", "content": user])
+                }
+                let reply = (turn.response ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                if !reply.isEmpty {
+                    rows.append(["role": "assistant", "content": reply])
+                }
+                return rows
+            }
         }
-        if let sessionId = sessionId {
-            params["sessionId"] = sessionId
-        }
-        let result = try await rpc(method: "chat.history", params: params)
-        return result["messages"] as? [[String: Any]] ?? []
+
+        let payload = try await invokeTool(name: "sessions_history", arguments: [
+            "session_key": resolved,
+            "limit": 200,
+            "include_tools": false,
+        ])
+        return payload["messages"] as? [[String: Any]] ?? []
     }
 
     // MARK: - Session Methods
 
     func sessionsList(limit: Int = 50, offset: Int = 0) async throws -> [GatewaySession] {
-        let result = try await rpc(method: "sessions.list", params: ["limit": limit, "offset": offset])
-        guard let sessionDicts = (result["sessions"] ?? result["items"]) as? [[String: Any]] else {
-            print("[Gateway] sessions.list: no sessions array in response, keys: \(result.keys)")
-            return []
-        }
-        return sessionDicts.compactMap { GatewaySession.from($0) }
+        let payload = try await invokeTool(name: "sessions_list", arguments: [
+            "limit": limit,
+            "offset": offset,
+            "includeDerivedTitles": true,
+            "includeLastMessage": true,
+        ])
+        let items = payload["sessions"] as? [[String: Any]] ?? payload["items"] as? [[String: Any]] ?? []
+        let mapped = items.compactMap(mapSession)
+        await MainActor.run { self.sessions = mapped }
+        return mapped
     }
 
     func sessionsGet(id: String) async throws -> [String: Any] {
-        return try await rpc(method: "sessions.get", params: ["id": id])
+        ["id": id]
     }
 
     func sessionsDelete(id: String) async throws {
-        let _ = try await rpc(method: "sessions.delete", params: ["id": id])
+        throw GatewayError.invalidRequest("IronClaw 当前未提供会话删除接口")
     }
 
     func sessionsReset(id: String) async throws {
-        let _ = try await rpc(method: "sessions.reset", params: ["id": id])
+        throw GatewayError.invalidRequest("IronClaw 当前未提供会话重置接口")
     }
 
     func sessionsCompact(id: String) async throws {
-        let _ = try await rpc(method: "sessions.compact", params: ["id": id])
+        throw GatewayError.invalidRequest("IronClaw 当前未提供会话压缩接口")
     }
 
     // MARK: - Agent Methods
 
     func agentsList() async throws -> [GatewayAgent] {
-        let result = try await rpc(method: "agents.list")
-        guard let agentDicts = (result["agents"] ?? result["items"]) as? [[String: Any]] else {
-            print("[Gateway] agents.list: no agents array in response, keys: \(result.keys)")
-            return []
-        }
-        return agentDicts.compactMap { GatewayAgent.from($0) }
+        let models = try await fetchModels()
+        let mapped = makeAgents(from: models)
+        await MainActor.run { self.agents = mapped }
+        return mapped
     }
 
     func getAgentIdentity() async throws -> GatewayAgentIdentity {
-        // Gateway doesn't have a dedicated identity RPC — extract from agents.list or use default
-        let result = try await rpc(method: "agents.list")
-        if let agentDicts = result["agents"] as? [[String: Any]], let first = agentDicts.first {
-            return GatewayAgentIdentity(
-                name: first["name"] as? String ?? first["id"] as? String ?? "助手",
-                creature: first["creature"] as? String ?? "AI",
-                vibe: first["vibe"] as? String,
-                emoji: first["emoji"] as? String ?? "🤖",
-                color: first["color"] as? String ?? "#6B7280"
-            )
-        }
-        return GatewayAgentIdentity()
+        let identity = GatewayAgentIdentity(name: "IronClaw", creature: "AI", vibe: "Native", emoji: "🤖", color: "#6B7280")
+        await MainActor.run { self.agentIdentity = identity }
+        return identity
     }
 
     // MARK: - Cron Methods
 
     func cronList(includeDisabled: Bool = true) async throws -> [GatewayCronJob] {
-        let result = try await rpc(method: "cron.list", params: ["includeDisabled": includeDisabled])
-        guard let jobDicts = (result["jobs"] ?? result["items"]) as? [[String: Any]] else {
-            print("[Gateway] cron.list: no jobs array in response, keys: \(result.keys)")
-            return []
-        }
-        return jobDicts.compactMap { GatewayCronJob.from($0) }
+        let payload = try await invokeTool(name: "cron_list", arguments: [
+            "include_disabled": includeDisabled,
+        ])
+        let items = payload["jobs"] as? [[String: Any]] ?? payload["items"] as? [[String: Any]] ?? []
+        let jobs = items.compactMap { GatewayCronJob.from($0) }
+        await MainActor.run { self.cronJobs = jobs }
+        return jobs
     }
 
     func cronUpdate(id: String, enabled: Bool? = nil, name: String? = nil) async throws {
-        var patch: [String: Any] = ["id": id]
-        if let enabled = enabled { patch["enabled"] = enabled }
-        if let name = name { patch["name"] = name }
-        let _ = try await rpc(method: "cron.update", params: patch)
-        // Refresh local state
-        await loadCronJobs()
+        var args: [String: Any] = ["id": id]
+        if let enabled { args["enabled"] = enabled }
+        if let name { args["name"] = name }
+        _ = try await invokeTool(name: "cron_update", arguments: args)
+        _ = try await cronList()
     }
 
     func cronRun(id: String, mode: String = "force") async throws -> GatewayCronRunResult {
-        let result = try await rpc(method: "cron.run", params: ["id": id, "mode": mode])
+        let payload = try await invokeTool(name: "cron_run", arguments: ["id": id, "mode": mode])
         return GatewayCronRunResult(
-            ok: result["ok"] as? Bool,
-            ran: result["ran"] as? Bool,
-            reason: result["reason"] as? String
+            ok: payload["ok"] as? Bool,
+            ran: payload["ran"] as? Bool,
+            reason: payload["reason"] as? String
         )
     }
 
     func cronRemove(id: String) async throws {
-        let _ = try await rpc(method: "cron.remove", params: ["id": id])
-        await loadCronJobs()
+        throw GatewayError.invalidRequest("IronClaw 当前未提供定时任务删除接口")
     }
 
     func cronGetStatus() async throws -> GatewayCronStatus {
-        let result = try await rpc(method: "cron.status")
-        let status = GatewayCronStatus.from(result)
+        let jobs = try await cronList()
+        let nextWake = jobs.compactMap { $0.nextRunAtMs }.min()
+        let status = GatewayCronStatus(enabled: !jobs.isEmpty, jobs: jobs.count, nextWakeAtMs: nextWake, storePath: nil)
         await MainActor.run { self.cronStatus = status }
         return status
     }
 
     func cronRunsRead(jobId: String, limit: Int = 20) async throws -> [GatewayCronRun] {
-        let result = try await rpc(method: "cron.runs.read", params: ["jobId": jobId, "limit": limit])
-        guard let runDicts = (result["runs"] ?? result["items"]) as? [[String: Any]] else {
-            return []
-        }
-        return runDicts.map { GatewayCronRun.from($0) }
+        let payload = try await invokeTool(name: "cron_runs_read", arguments: ["job_id": jobId, "limit": limit])
+        let items = payload["runs"] as? [[String: Any]] ?? payload["items"] as? [[String: Any]] ?? []
+        return items.map { GatewayCronRun.from($0) }
     }
 
     // MARK: - Log Methods
 
     func logsTail(sinceMs: Int = 60000) {
-        Task {
-            do {
-                let result = try await rpc(method: "logs.tail", params: ["sinceMs": sinceMs])
-                if let entries = result["entries"] as? [[String: Any]] {
-                    for entry in entries {
-                        let logEntry = GatewayLogEntry(
-                            timestamp: Date(timeIntervalSince1970: (entry["ts"] as? Double ?? 0) / 1000),
-                            level: entry["level"] as? String ?? "info",
-                            message: entry["message"] as? String ?? entry["msg"] as? String ?? "",
-                            source: entry["source"] as? String
-                        )
-                        logSubject.send(logEntry)
-                    }
-                }
-            } catch {
-                print("[Gateway] logs.tail error: \(error)")
-            }
-        }
+        let entry = GatewayLogEntry(
+            timestamp: Date(),
+            level: "info",
+            message: "IronClaw 原生 API 当前未提供日志尾流，日志页面仅显示此提示。",
+            source: "ironclaw"
+        )
+        logSubject.send(entry)
     }
 
     // MARK: - Gateway Status Methods
 
     func getGatewayStatus() async throws -> GatewayStatusResponse {
-        let result = try await rpc(method: "gateway.status")
-        let status = GatewayStatusResponse.from(result)
+        let details = try await fetchHealthDetails()
+        let status = GatewayStatusResponse(
+            uptime: details.uptimeSeconds,
+            version: details.version ?? serverHostDisplay,
+            agents: agents.count,
+            sessions: sessions.count,
+            connectedDevices: nil
+        )
         await MainActor.run { self.gatewayStatus = status }
         return status
     }
 
     func getGatewayHealth() async throws -> GatewayHealthResponse {
-        let result = try await rpc(method: "gateway.health")
-        return GatewayHealthResponse.from(result)
+        let details = try await fetchHealthDetails()
+        return GatewayHealthResponse(
+            status: details.status ?? "ok",
+            uptime: details.uptimeSeconds,
+            memory: GatewayMemoryInfo(
+                rss: details.memory?.rss,
+                heapUsed: details.memory?.heapUsed,
+                heapTotal: details.memory?.heapTotal
+            )
+        )
     }
 
     // MARK: - Approval Methods
 
     func approvalsGet() async throws -> [GatewayApproval] {
-        let result = try await rpc(method: "exec.approvals.get")
-        guard let approvalDicts = result["approvals"] as? [[String: Any]] else {
-            await MainActor.run { self.pendingApprovals = [] }
-            return []
-        }
-        let approvals = approvalDicts.compactMap { GatewayApproval.from($0) }
-        await MainActor.run { self.pendingApprovals = approvals }
-        return approvals
+        await MainActor.run { self.pendingApprovals = [] }
+        return []
     }
 
     func approvalsResolve(id: String, decision: String) async throws {
-        let _ = try await rpc(method: "exec.approvals.resolve", params: ["id": id, "decision": decision])
-        await MainActor.run {
-            self.pendingApprovals.removeAll { $0.id == id }
-        }
+        throw GatewayError.invalidRequest("IronClaw 当前未提供执行审批接口")
     }
 
     // MARK: - Utility
@@ -1401,55 +420,472 @@ class GatewayConnection: NSObject, ObservableObject {
     func clearMessages() {
         messages.removeAll()
         thinkingSteps.removeAll()
-    }
-}
-
-// MARK: - URLSessionWebSocketDelegate
-
-extension GatewayConnection: URLSessionWebSocketDelegate {
-    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
-        debugAppend("WebSocket opened successfully")
-        connectNonce = nil
-        connectSent = false
-
-        DispatchQueue.main.async {
-            self.isConnecting = true
-            self.connectionError = nil  // Clear any previous error on successful open
-        }
-        // Start receiving messages
-        receiveMessage()
-        // Queue connect with short delay to allow connect.challenge event to arrive first
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            self?.performHandshake()
-        }
+        previousResponseId = nil
+        currentSessionId = nil
+        currentSessionKey = nil
+        chatError = nil
+        chatStatus = nil
     }
 
-    func urlSession(_ session: URLSession, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
-        // Accept Tailscale serve certificates
-        debugAppend("TLS challenge: \(challenge.protectionSpace.authenticationMethod)")
-        completionHandler(.performDefaultHandling, nil)
+    // MARK: - Internal loaders
+
+    private func loadSessions() async {
+        _ = try? await sessionsList(limit: 100)
     }
 
-    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
-        let errorDesc: String
-        if let error = error {
-            let nsError = error as NSError
-            errorDesc = "\(nsError.localizedDescription) (code: \(nsError.code), domain: \(nsError.domain))"
-            debugAppend("Connection error: \(errorDesc)")
-            handleTransportFailure(errorDesc)
-        } else {
-            errorDesc = "Connection closed"
-            debugAppend("Connection closed normally")
-            DispatchQueue.main.async {
-                self.isConnected = false
-                self.isConnecting = false
+    private func loadCronJobs() async {
+        _ = try? await cronList()
+        _ = try? await cronGetStatus()
+    }
+
+    private func loadHealthStatus() async {
+        _ = try? await getGatewayStatus()
+    }
+
+    private func loadApprovals() async {
+        _ = try? await approvalsGet()
+    }
+
+    // MARK: - Thread Chat
+
+    private func sendThreadMessage(_ message: String, requestedThreadId: String?) async {
+        do {
+            let threadId = try await ensureThreadID(requestedThreadId)
+            let baselineHistory = try await fetchThreadHistory(threadId: threadId)
+            let baselineTurnCount = baselineHistory.turns.count
+
+            await MainActor.run {
+                self.currentSessionId = threadId
+                self.currentSessionKey = threadId
+                self.previousResponseId = nil
+                self.isWaitingForResponse = true
+                self.chatStatus = "等待 IronClaw 响应..."
             }
-            reconnect()
+
+            debugAppend("POST /api/chat/send → thread_id=\(threadId)")
+            try await postThreadMessage(message, threadId: threadId)
+            let poll = try await waitForThreadTurn(threadId: threadId, afterTurnCount: baselineTurnCount)
+
+            await MainActor.run {
+                self.replaceMessagesFromThreadHistory(poll.history, threadId: threadId)
+                self.isWaitingForResponse = false
+                self.chatStatus = nil
+                let responseText = (poll.latestTurn.response ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                if responseText.isEmpty {
+                    self.chatError = "IronClaw 未返回可显示内容"
+                }
+            }
+        } catch is CancellationError {
+            await MainActor.run {
+                self.isWaitingForResponse = false
+                self.chatStatus = nil
+            }
+        } catch {
+            let message = userFacingErrorMessage(error.localizedDescription)
+            debugAppend("Chat failed: \(message)")
+            await MainActor.run {
+                self.isWaitingForResponse = false
+                self.chatStatus = nil
+                self.chatError = "发送失败：\(message)"
+            }
         }
+    }
+
+    private func ensureThreadID(_ requestedThreadId: String?) async throws -> String {
+        if let requestedThreadId,
+           !requestedThreadId.isEmpty,
+           isLikelyThreadID(requestedThreadId) {
+            return requestedThreadId
+        }
+
+        if let currentSessionId,
+           !currentSessionId.isEmpty,
+           isLikelyThreadID(currentSessionId) {
+            return currentSessionId
+        }
+
+        let thread = try await createThread()
+        await MainActor.run {
+            self.currentSessionId = thread.id
+            self.currentSessionKey = thread.id
+            self.previousResponseId = nil
+        }
+        return thread.id
+    }
+
+    private func postThreadMessage(_ content: String, threadId: String) async throws {
+        let url = try endpointURL(path: "/api/chat/send")
+        let body = try JSONEncoder().encode(IronClawSendRequest(
+            content: content,
+            threadId: threadId,
+            timezone: TimeZone.current.identifier
+        ))
+        let request = authorizedRequest(url: url, method: "POST", body: body)
+        let (_, response) = try await urlSession.data(for: request)
+        try validateHTTP(response)
+    }
+
+    private func waitForThreadTurn(threadId: String, afterTurnCount: Int, timeoutSeconds: TimeInterval = 45) async throws -> IronClawThreadPollResult {
+        let deadline = Date().addingTimeInterval(timeoutSeconds)
+        while Date() < deadline {
+            let history = try await fetchThreadHistory(threadId: threadId)
+            if let latestTurn = history.turns.last,
+               history.turns.count > afterTurnCount,
+               latestTurn.isTerminal {
+                return IronClawThreadPollResult(history: history, latestTurn: latestTurn)
+            }
+            try await Task.sleep(nanoseconds: 300_000_000)
+        }
+        throw GatewayError.serverError(code: "timeout", message: "等待 IronClaw 对话结果超时")
+    }
+
+    private func fetchThreadHistory(threadId: String) async throws -> IronClawThreadHistoryResponse {
+        let encoded = threadId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? threadId
+        let url = try endpointURL(path: "/api/chat/history?thread_id=\(encoded)")
+        let request = authorizedRequest(url: url, method: "GET")
+        let (data, response) = try await urlSession.data(for: request)
+        try validateHTTP(response)
+        return try JSONDecoder.snakeCase.decode(IronClawThreadHistoryResponse.self, from: data)
+    }
+
+    private func createThread() async throws -> IronClawThreadInfo {
+        let url = try endpointURL(path: "/api/chat/thread/new")
+        let request = authorizedRequest(url: url, method: "POST")
+        let (data, response) = try await urlSession.data(for: request)
+        try validateHTTP(response)
+        return try JSONDecoder.snakeCase.decode(IronClawThreadInfo.self, from: data)
+    }
+
+    private func loadThreadHistoryIntoMessages(_ threadId: String) async throws {
+        let history = try await fetchThreadHistory(threadId: threadId)
+        await MainActor.run {
+            self.replaceMessagesFromThreadHistory(history, threadId: threadId)
+        }
+    }
+
+    private func replaceMessagesFromThreadHistory(_ history: IronClawThreadHistoryResponse, threadId: String) {
+        messages = mapThreadMessages(history)
+        currentSessionId = threadId
+        currentSessionKey = threadId
+        previousResponseId = nil
+    }
+
+    private func mapThreadMessages(_ history: IronClawThreadHistoryResponse) -> [GatewayChatMessage] {
+        history.turns.flatMap { turn -> [GatewayChatMessage] in
+            var items: [GatewayChatMessage] = []
+            let user = turn.userInput.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !user.isEmpty {
+                items.append(GatewayChatMessage(role: "user", content: user))
+            }
+            let assistant = (turn.response ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !assistant.isEmpty {
+                items.append(GatewayChatMessage(role: "assistant", content: assistant))
+            }
+            return items
+        }
+    }
+
+    private func isLikelyThreadID(_ value: String?) -> Bool {
+        guard let value else { return false }
+        return UUID(uuidString: value) != nil
+    }
+
+    // MARK: - HTTP Helpers
+
+    private var serverHostDisplay: String {
+        if let url = URL(string: gatewayHost), let host = url.host {
+            return host
+        }
+        return gatewayHost
+    }
+
+    private func endpointURL(path: String) throws -> URL {
+        let normalized = Self.normalizeGatewayEndpoint(gatewayHost, fallbackPort: gatewayPort)
+        let rawBase = normalized.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        let baseString: String
+        if rawBase.lowercased().hasPrefix("http://") || rawBase.lowercased().hasPrefix("https://") {
+            baseString = rawBase
+        } else {
+            baseString = "http://\(rawBase):\(normalized.port)"
+        }
+
+        guard var components = URLComponents(string: baseString), let scheme = components.scheme else {
+            throw GatewayError.invalidRequest("IronClaw 地址无效")
+        }
+
+        if components.host != nil && components.port == nil {
+            let defaultPort = (scheme.lowercased() == "https") ? 443 : 80
+            if normalized.port != defaultPort {
+                components.port = normalized.port
+            }
+        }
+
+        let suffix = path.hasPrefix("/") ? path : "/\(path)"
+        let basePath = components.path == "/" ? "" : components.path
+        components.path = basePath + suffix
+
+        guard let url = components.url else {
+            throw GatewayError.invalidRequest("IronClaw 地址无效")
+        }
+        return url
+    }
+
+    private func authorizedRequest(url: URL, method: String, body: Data? = nil, extraHeaders: [String: String] = [:]) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.timeoutInterval = 60
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if let body {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = body
+        }
+        let trimmedToken = gatewayToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmedToken.isEmpty {
+            request.setValue("Bearer \(trimmedToken)", forHTTPHeaderField: "Authorization")
+        }
+        for (key, value) in extraHeaders {
+            request.setValue(value, forHTTPHeaderField: key)
+        }
+        return request
+    }
+
+    private func validateHTTP(_ response: URLResponse, data: Data? = nil, endpoint: String? = nil) throws {
+        guard let http = response as? HTTPURLResponse else {
+            throw GatewayError.serverError(code: "invalid_response", message: "IronClaw 返回了无效响应")
+        }
+        guard (200 ..< 300).contains(http.statusCode) else {
+            if http.statusCode == 404, endpoint == "/tools/invoke" {
+                throw GatewayError.serverError(code: "tool_unavailable", message: "当前 IronClaw 部署未启用工具接口（/tools/invoke）。该功能在此服务器上不可用。")
+            }
+            throw GatewayError.serverError(code: "http_\(http.statusCode)", message: "IronClaw 请求失败（HTTP \(http.statusCode)）")
+        }
+    }
+
+    private func fetchModels() async throws -> [IronClawModel] {
+        let url = try endpointURL(path: "/v1/models")
+        let request = authorizedRequest(url: url, method: "GET")
+        let (data, response) = try await urlSession.data(for: request)
+        try validateHTTP(response)
+        let decoded = try JSONDecoder().decode(IronClawModelsResponse.self, from: data)
+        return decoded.data
+    }
+
+    private func fetchHealthDetails() async throws -> IronClawHealthResponse {
+        let candidatePaths = ["/api/gateway/status", "/health/detailed", "/health"]
+        var lastError: Error?
+
+        for path in candidatePaths {
+            do {
+                let url = try endpointURL(path: path)
+                let request = authorizedRequest(url: url, method: "GET")
+                let (data, response) = try await urlSession.data(for: request)
+                try validateHTTP(response)
+                if let direct = try? JSONDecoder.snakeCase.decode(IronClawHealthResponse.self, from: data) {
+                    return direct
+                }
+                if let envelope = try? JSONDecoder.snakeCase.decode(IronClawGatewayStatusEnvelope.self, from: data) {
+                    return IronClawHealthResponse(
+                        status: envelope.status,
+                        version: envelope.version,
+                        uptimeSeconds: envelope.uptimeSeconds,
+                        memory: envelope.memory
+                    )
+                }
+            } catch {
+                lastError = error
+            }
+        }
+
+        throw lastError ?? GatewayError.serverError(code: "status_unavailable", message: "无法读取 IronClaw 状态")
+    }
+
+    private func invokeTool(name: String, arguments: [String: Any]) async throws -> [String: Any] {
+        let url = try endpointURL(path: "/tools/invoke")
+        let body = try JSONSerialization.data(withJSONObject: [
+            "tool": name,
+            "args": arguments,
+        ])
+        let request = authorizedRequest(url: url, method: "POST", body: body)
+        let (data, response) = try await urlSession.data(for: request)
+        try validateHTTP(response, data: data, endpoint: "/tools/invoke")
+
+        if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+            if let ok = json["ok"] as? Bool, !ok {
+                let error = json["error"] as? [String: Any]
+                throw GatewayError.serverError(
+                    code: error?["code"] as? String ?? "tool_failed",
+                    message: error?["message"] as? String ?? "IronClaw 工具调用失败"
+                )
+            }
+
+            if let result = json["result"] as? [String: Any],
+               let content = result["content"] as? [[String: Any]],
+               let text = content.first?["text"] as? String,
+               let nestedData = text.data(using: .utf8),
+               let nestedJSON = try JSONSerialization.jsonObject(with: nestedData) as? [String: Any] {
+                return nestedJSON
+            }
+
+            return json["payload"] as? [String: Any] ?? json
+        }
+
+        throw GatewayError.decodingError("无法解析 IronClaw 工具调用结果")
+    }
+
+    // MARK: - Mapping
+
+    private func makeAgents(from models: [IronClawModel]) -> [GatewayAgent] {
+        if models.isEmpty {
+            return [GatewayAgent(id: "main", name: "IronClaw", emoji: "🤖", color: "#6B7280", model: nil, status: "idle", skills: nil)]
+        }
+
+        return models.enumerated().map { index, model in
+            GatewayAgent(
+                id: index == 0 ? "main" : model.id,
+                name: index == 0 ? "IronClaw" : model.id,
+                emoji: index == 0 ? "🤖" : nil,
+                color: "#6B7280",
+                model: model.id,
+                status: "idle",
+                skills: nil
+            )
+        }
+    }
+
+    private func mapSession(_ dict: [String: Any]) -> GatewaySession? {
+        let key = dict["key"] as? String ?? dict["sessionKey"] as? String
+        guard let key else { return nil }
+        let sessionID = dict["id"] as? String ?? key
+        let title = dict["derivedTitle"] as? String ?? dict["label"] as? String
+        let startedAt = isoString(from: dict["startedAt"])
+        let updatedAt = isoString(from: dict["updatedAt"])
+
+        return GatewaySession(
+            id: sessionID,
+            agentId: parseAgentId(from: key),
+            agentName: title,
+            model: dict["model"] as? String,
+            messageCount: dict["messageCount"] as? Int,
+            totalCost: dict["totalCost"] as? Double,
+            tokensUsed: GatewayTokenUsage(
+                input: dict["inputTokens"] as? Int,
+                output: dict["outputTokens"] as? Int,
+                cached: dict["cachedTokens"] as? Int
+            ),
+            updatedAt: updatedAt,
+            startedAt: startedAt,
+            projectPath: dict["cwd"] as? String,
+            status: dict["kind"] as? String ?? "direct",
+            sessionKey: key
+        )
+    }
+
+    private func parseAgentId(from sessionKey: String) -> String? {
+        let parts = sessionKey.split(separator: ":")
+        guard parts.count > 1 else { return "main" }
+        return String(parts[1])
+    }
+
+    private func isoString(from value: Any?) -> String? {
+        if let string = value as? String {
+            return string
+        }
+        if let ms = value as? Double {
+            return ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: ms / 1000))
+        }
+        if let ms = value as? Int {
+            return ISO8601DateFormatter().string(from: Date(timeIntervalSince1970: Double(ms) / 1000))
+        }
+        return nil
+    }
+
+    private func userFacingErrorMessage(_ message: String) -> String {
+        let normalized = message.lowercased()
+        if normalized.contains("401") || normalized.contains("unauthorized") {
+            return "IronClaw Bearer Token 缺失或无效。"
+        }
+        if normalized.contains("403") || normalized.contains("forbidden") {
+            return "当前令牌没有访问 IronClaw 的权限。"
+        }
+        if normalized.contains("failed to connect") || normalized.contains("offline") || normalized.contains("could not connect") {
+            return "无法连接到 IronClaw 服务。"
+        }
+        return message
     }
 }
 
-// MARK: - Int Extension
+// MARK: - DTOs
+
+private struct IronClawModelsResponse: Decodable {
+    let data: [IronClawModel]
+}
+
+private struct IronClawModel: Decodable {
+    let id: String
+}
+
+private struct IronClawHealthResponse: Decodable {
+    let status: String?
+    let version: String?
+    let uptimeSeconds: Double?
+    let memory: IronClawMemory?
+}
+
+private struct IronClawGatewayStatusEnvelope: Decodable {
+    let status: String?
+    let version: String?
+    let uptimeSeconds: Double?
+    let memory: IronClawMemory?
+}
+
+private struct IronClawMemory: Decodable {
+    let rss: Int?
+    let heapUsed: Int?
+    let heapTotal: Int?
+}
+
+private struct IronClawThreadInfo: Decodable {
+    let id: String
+}
+
+private struct IronClawThreadHistoryResponse: Decodable {
+    let threadId: String
+    let turns: [IronClawThreadTurn]
+    let hasMore: Bool
+}
+
+private struct IronClawThreadTurn: Decodable {
+    let turnNumber: Int?
+    let userInput: String
+    let response: String?
+    let state: String
+    let startedAt: String?
+    let completedAt: String?
+
+    var isTerminal: Bool {
+        let normalized = state.lowercased()
+        return normalized.contains("completed") || normalized.contains("failed") || normalized.contains("accepted")
+    }
+}
+
+private struct IronClawSendRequest: Encodable {
+    let content: String
+    let threadId: String?
+    let timezone: String?
+}
+
+private struct IronClawThreadPollResult {
+    let history: IronClawThreadHistoryResponse
+    let latestTurn: IronClawThreadTurn
+}
+
+private extension JSONDecoder {
+    static let snakeCase: JSONDecoder = {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return decoder
+    }()
+}
 
 private extension Int {
     var nonZero: Int? { self == 0 ? nil : self }

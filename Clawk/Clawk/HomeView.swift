@@ -114,7 +114,7 @@ struct HomeView: View {
                         Circle()
                             .fill(dashboardAPI.isReachable ? Color.blue : Color.orange)
                             .frame(width: 8, height: 8)
-                        Text("仪表盘")
+                        Text("Dashboard")
                             .font(.caption2)
                             .foregroundColor(.secondary)
                     }
@@ -136,9 +136,9 @@ struct HomeView: View {
 
     private var displayGatewayAddress: String {
         let normalized = GatewayConnection.normalizeGatewayEndpoint(gateway.gatewayHost, fallbackPort: gateway.gatewayPort)
-        return normalized.host.hasPrefix("ws://") || normalized.host.hasPrefix("wss://")
+        return normalized.host.hasPrefix("http://") || normalized.host.hasPrefix("https://")
             ? normalized.host
-            : "\(normalized.host):\(normalized.port)"
+            : "http://\(normalized.host):\(normalized.port)"
     }
 
     private var overviewSection: some View {
@@ -447,29 +447,10 @@ struct HomeView: View {
                 Divider().padding(.leading, 48)
 
                 NavigationLink {
-                    ApprovalQueueView(gateway: gateway)
-                        .navigationTitle("审批")
-                } label: {
-                    moreRow(icon: "checkmark.shield.fill", color: .orange, title: "审批",
-                            badge: gateway.pendingApprovals.count > 0 ? "\(gateway.pendingApprovals.count)" : nil)
-                }
-
-                Divider().padding(.leading, 48)
-
-                NavigationLink {
                     CostsView(dashboardAPI: dashboardAPI)
                         .navigationTitle("费用")
                 } label: {
                     moreRow(icon: "dollarsign.circle.fill", color: .green, title: "费用")
-                }
-
-                Divider().padding(.leading, 48)
-
-                NavigationLink {
-                    AgentLogsView(gateway: gateway)
-                        .navigationTitle("日志")
-                } label: {
-                    moreRow(icon: "doc.text.magnifyingglass", color: .indigo, title: "日志")
                 }
 
                 Divider().padding(.leading, 48)

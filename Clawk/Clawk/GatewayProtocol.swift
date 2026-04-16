@@ -1,8 +1,8 @@
 import Foundation
 
-// MARK: - OpenClaw Gateway Protocol v3
+// MARK: - IronClaw compatibility models
 
-/// Error types from the Gateway
+/// Error types from the IronClaw compatibility layer
 enum GatewayError: Error, LocalizedError {
     case notConnected
     case notLinked
@@ -18,14 +18,14 @@ enum GatewayError: Error, LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case .notConnected: return "未连接到网关"
+        case .notConnected: return "未连接到 IronClaw"
         case .notLinked: return "客户端未认证"
         case .notPaired: return "需要设备配对"
         case .agentTimeout: return "代理执行超时"
-        case .tokenMissing: return "缺少网关令牌或令牌无效"
-        case .originNotAllowed: return "当前地址来源未被网关允许，请检查网关地址与路径前缀是否正确"
+        case .tokenMissing: return "缺少 IronClaw Bearer Token 或令牌无效"
+        case .originNotAllowed: return "当前 IronClaw 地址无效，请检查服务地址与路径前缀是否正确"
         case .invalidRequest(let msg): return "无效请求: \(msg)"
-        case .unavailable(let retry): return "网关不可用\(retry.map { "，\($0)ms后重试" } ?? "")"
+        case .unavailable(let retry): return "IronClaw 不可用\(retry.map { "，\($0)ms后重试" } ?? "")"
         case .serverError(_, let msg): return msg
         case .decodingError(let msg): return "解码错误: \(msg)"
         case .timeout: return "请求超时"

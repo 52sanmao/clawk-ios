@@ -2,7 +2,7 @@ import Foundation
 import SwiftUI
 
 enum Config {
-    // Legacy relay backend kept separate from the primary OpenClaw gateway connection.
+    // Legacy relay backend kept separate from the primary IronClaw connection.
     static let relayBaseURL = UserDefaults.standard.string(forKey: "relayBaseURL") ?? "http://localhost:3002"
 
     static var baseURL: String { relayBaseURL }

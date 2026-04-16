@@ -2,7 +2,7 @@ import SwiftUI
 import SwiftData
 
 // MARK: - Gateway Chat View
-/// Native chat interface using direct OpenClaw Gateway WebSocket
+/// Native chat interface using IronClaw HTTP/SSE.
 struct GatewayChatView: View {
     @StateObject private var gateway = GatewayConnection()
     @State private var messageText = ""
@@ -209,14 +209,21 @@ struct GatewaySettingsView: View {
     var body: some View {
         NavigationView {
             Form {
-                Section("网关连接") {
-                    TextField("主机", text: $host)
+                Section("IronClaw 连接") {
+                    TextField("IronClaw 地址", text: $host)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                     
                     TextField("端口", text: $port)
                         .keyboardType(.numberPad)
-                    
+
+                    SecureField("IronClaw Bearer Token（可选）", text: .constant(""))
+                        .disabled(true)
+
+                    Text("IronClaw 使用 HTTP API 与 SSE 流式响应；如需修改令牌，请前往主设置页。")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+
                     Button(gateway.isConnected ? "断开连接" : "连接") {
                         if gateway.isConnected {
                             gateway.disconnect()
@@ -280,7 +287,7 @@ struct GatewaySettingsView: View {
                         .foregroundColor(.secondary)
                 }
             }
-            .navigationTitle("网关设置")
+            .navigationTitle("IronClaw 设置")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {

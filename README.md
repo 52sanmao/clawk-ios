@@ -1,6 +1,6 @@
 # Clawk iOS
 
-Personal iOS app for chatting with OpenClaw agents. Built with SwiftUI, powered by Tailscale + Railway.
+Personal iOS app for chatting with IronClaw-backed agents. Built with SwiftUI, powered by Tailscale + Railway.
 
 ## Architecture
 
@@ -12,8 +12,8 @@ Personal iOS app for chatting with OpenClaw agents. Built with SwiftUI, powered 
                                           │
                                           ▼
                                    ┌──────────────┐
-                                   │  OpenClaw    │
-                                   │   Gateway    │
+                                   │  IronClaw    │
+                                   │   Service    │
                                    └──────────────┘
 ```
 
@@ -61,7 +61,7 @@ curl -X POST https://your-app.railway.app/pair \
 
 ### 4. Send Messages
 
-From OpenClaw (or any HTTP client):
+From your backend service (or any HTTP client):
 
 ```bash
 curl -X POST https://your-app.railway.app/message \

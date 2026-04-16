@@ -231,7 +231,7 @@ struct GatewayDebugLogView: View {
                 }
             }
         }
-        .navigationTitle("网关调试日志")
+        .navigationTitle("IronClaw 调试日志")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .navigationBarLeading) {

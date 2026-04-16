@@ -35,7 +35,7 @@ struct CronManagementView: View {
 
                 if gateway.cronJobs.isEmpty && !isRefreshing {
                     if !gateway.isConnected {
-                        EmptyStateView(icon: "wifi.slash", message: "网关离线 — 请连接以加载定时任务")
+                        EmptyStateView(icon: "wifi.slash", message: "IronClaw 离线 — 请连接以加载定时任务")
                     } else {
                         EmptyStateView(icon: "clock.arrow.2.circlepath", message: "未找到定时任务")
                     }
@@ -339,11 +339,6 @@ struct CronJobDetailView: View {
                     }
                 }
 
-                Section {
-                    Button(role: .destructive, action: { showDeleteConfirmation = true }) {
-                        Label("删除任务", systemImage: "trash")
-                    }
-                }
             }
             .navigationTitle(job.displayName)
             .navigationBarTitleDisplayMode(.inline)
@@ -353,12 +348,6 @@ struct CronJobDetailView: View {
                 }
             }
             .onAppear { loadRuns() }
-            .alert("删除 \(job.displayName)？", isPresented: $showDeleteConfirmation) {
-                Button("取消", role: .cancel) {}
-                Button("删除", role: .destructive) { deleteJob() }
-            } message: {
-                Text("此操作无法撤销。")
-            }
         }
     }
 

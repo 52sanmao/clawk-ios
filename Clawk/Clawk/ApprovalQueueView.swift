@@ -13,8 +13,13 @@ struct ApprovalQueueView: View {
                     Image(systemName: "checkmark.shield.fill")
                         .font(.system(size: 48))
                         .foregroundColor(.green)
-                    Text("暂无待审批项")
+                    Text("IronClaw 当前没有可处理的审批项")
                         .foregroundColor(.secondary)
+                    Text("该能力仍依赖旧网关接口，当前 IronClaw 原生接入未提供对应审批通道。")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
