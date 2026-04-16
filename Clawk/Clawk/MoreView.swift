@@ -111,8 +111,12 @@ struct MoreView: View {
                     }
 
                     NavigationLink {
-                        GatewayDebugLogContent(gateway: gateway)
-                            .navigationTitle("调试日志")
+                        GatewayDebugLogContent(
+                            gateway: gateway,
+                            dashboardAPI: dashboardAPI,
+                            messageStore: messageStore
+                        )
+                        .navigationTitle("调试日志")
                     } label: {
                         Label("调试日志", systemImage: "ant.fill")
                             .foregroundColor(.primary)
@@ -182,6 +186,8 @@ struct RelayMessagesView: View {
 
 struct GatewayDebugLogContent: View {
     @ObservedObject var gateway: GatewayConnection
+    @ObservedObject var dashboardAPI: DashboardAPIClient
+    @ObservedObject var messageStore: MessageStore
     @State private var copyStatus: String?
 
     var body: some View {
@@ -189,7 +195,7 @@ struct GatewayDebugLogContent: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
                     VStack(alignment: .leading, spacing: 6) {
-                        Text("导出内容会包含应用名“抓控”、连接状态、聊天状态、当前线程和全部调试日志。")
+                        Text("导出内容会包含应用名“抓控”、IronClaw、Dashboard、Relay 三个模块的连接状态、请求日志与错误信息。")
                             .font(.caption)
                             .foregroundColor(.secondary)
 
@@ -203,44 +209,80 @@ struct GatewayDebugLogContent: View {
                     .padding(.horizontal, 8)
                     .padding(.top, 8)
 
-                    LazyVStack(alignment: .leading, spacing: 2) {
-                        ForEach(Array(gateway.debugLog.enumerated()), id: \.offset) { index, entry in
-                            Text(entry)
-                                .font(.system(size: 10, design: .monospaced))
-                                .foregroundColor(debugEntryColor(entry))
-                                .id(index)
-                        }
+                    LazyVStack(alignment: .leading, spacing: 10) {
+                        debugSection(title: "IronClaw", entries: gateway.debugLog)
+                        debugSection(title: "Dashboard", entries: dashboardAPI.debugLog)
+                        debugSection(title: "Relay / Dashboard 推送", entries: messageStore.logs)
+                        Color.clear
+                            .frame(height: 1)
+                            .id("debug-log-bottom")
                     }
                     .padding(8)
                 }
             }
-            .onChange(of: gateway.debugLog.count) {
-                if let last = gateway.debugLog.indices.last {
-                    withAnimation { proxy.scrollTo(last, anchor: .bottom) }
-                }
+            .onChange(of: combinedLogCount) {
+                withAnimation { proxy.scrollTo("debug-log-bottom", anchor: .bottom) }
             }
         }
         .toolbar {
             ToolbarItemGroup(placement: .navigationBarTrailing) {
                 Button("复制全部") {
-                    UIPasteboard.general.string = gateway.debugLogExportText
+                    UIPasteboard.general.string = combinedDebugExportText
                     copyStatus = "已复制完整日志"
                 }
 
                 Button("清除") {
                     gateway.clearDebugLog()
+                    dashboardAPI.clearDebugLog()
+                    messageStore.clearDetailedLogs()
                     copyStatus = nil
                 }
             }
         }
     }
 
+    private var combinedLogCount: Int {
+        gateway.debugLog.count + dashboardAPI.debugLog.count + messageStore.logs.count
+    }
+
+    private var combinedDebugExportText: String {
+        [
+            gateway.debugLogExportText,
+            "",
+            dashboardAPI.debugLogExportSection,
+            "",
+            messageStore.debugLogExportSection,
+        ].joined(separator: "\n")
+    }
+
+    @ViewBuilder
+    private func debugSection(title: String, entries: [String]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.headline)
+
+            if entries.isEmpty {
+                Text("<empty>")
+                    .font(.system(size: 10, design: .monospaced))
+                    .foregroundColor(.secondary)
+            } else {
+                ForEach(Array(entries.enumerated()), id: \.offset) { _, entry in
+                    Text(entry)
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(debugEntryColor(entry))
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
     private func debugEntryColor(_ entry: String) -> Color {
         if entry.contains("FAILED") || entry.contains("error") || entry.contains("Error") || entry.contains("failed") {
             return .red
-        } else if entry.contains("OK") || entry.contains("succeeded") || entry.contains("connected") || entry.contains("Connected") {
+        } else if entry.contains("OK") || entry.contains("succeeded") || entry.contains("connected") || entry.contains("Connected") || entry.contains("success") {
             return .green
-        } else if entry.contains("chat event") || entry.contains("Agent event") || entry.contains("/api/chat/") {
+        } else if entry.contains("/api/chat/") || entry.contains("HTTP ") || entry.contains("GET ") || entry.contains("POST ") || entry.contains("PUT ") || entry.contains("PATCH ") || entry.contains("WS ") {
             return .blue
         }
         return .primary

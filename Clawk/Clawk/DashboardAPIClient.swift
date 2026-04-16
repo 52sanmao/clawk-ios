@@ -8,6 +8,7 @@ class DashboardAPIClient: ObservableObject {
 
     @Published var isReachable = false
     @Published var lastError: String?
+    @Published var debugLog: [String] = []
 
     private let session = URLSession.shared
     private var baseURL: String
@@ -24,6 +25,109 @@ class DashboardAPIClient: ObservableObject {
     func updateBaseURL(_ url: String) {
         self.baseURL = url
         UserDefaults.standard.set(url, forKey: "dashboardBaseURL")
+        log("Updated Dashboard base URL to \(url)")
+    }
+
+    var debugLogExportSection: String {
+        let lines: [String] = [
+            "模块: Dashboard API",
+            "Base URL: \(baseURL)",
+            "可访问: \(isReachable ? "是" : "否")",
+            "lastError: \(lastError ?? "无")",
+            "日志:",
+        ]
+        let logLines = debugLog.isEmpty ? ["<empty>"] : debugLog
+        return (lines + logLines).joined(separator: "\n")
+    }
+
+    func clearDebugLog() {
+        debugLog.removeAll()
+    }
+
+    private func log(_ message: String) {
+        let timestamp = DateFormatter.localizedString(from: Date(), dateStyle: .none, timeStyle: .medium)
+        let entry = "[\(timestamp)] \(message)"
+        DispatchQueue.main.async {
+            self.debugLog.append(entry)
+            if self.debugLog.count > 300 {
+                self.debugLog.removeFirst()
+            }
+        }
+    }
+
+    private func logRequest(_ method: String, url: URL, body: Data? = nil) {
+        if let body, let text = String(data: body, encoding: .utf8), !text.isEmpty {
+            log("\(method) \(url.absoluteString) body=\(text)")
+        } else {
+            log("\(method) \(url.absoluteString)")
+        }
+    }
+
+    private func logResponse(_ response: URLResponse, data: Data? = nil) {
+        if let http = response as? HTTPURLResponse {
+            if let data, let text = String(data: data, encoding: .utf8), !text.isEmpty {
+                log("HTTP \(http.statusCode) \(http.url?.absoluteString ?? "") response=\(text)")
+            } else {
+                log("HTTP \(http.statusCode) \(http.url?.absoluteString ?? "")")
+            }
+        } else {
+            log("Non-HTTP response received")
+        }
+    }
+
+    private func logFailure(_ method: String, url: URL, error: Error) {
+        log("\(method) \(url.absoluteString) failed: \(error.localizedDescription)")
+    }
+
+    private func noteReachable() {
+        Task { @MainActor in
+            self.isReachable = true
+            self.lastError = nil
+        }
+    }
+
+    private func noteFailure(_ error: Error) {
+        Task { @MainActor in
+            self.isReachable = false
+            self.lastError = error.localizedDescription
+        }
+    }
+
+    private func requestURL(for path: String) throws -> URL {
+        guard let url = URL(string: "\(baseURL)\(path)") else {
+            throw URLError(.badURL)
+        }
+        return url
+    }
+
+    private func execute(_ request: URLRequest) async throws -> Data {
+        logRequest(request.httpMethod ?? "GET", url: request.url!, body: request.httpBody)
+        do {
+            let (data, response) = try await session.data(for: request)
+            logResponse(response, data: data)
+            try validateResponse(response)
+            noteReachable()
+            return data
+        } catch {
+            logFailure(request.httpMethod ?? "GET", url: request.url!, error: error)
+            noteFailure(error)
+            throw error
+        }
+    }
+
+    private func executeGET(_ url: URL) async throws -> Data {
+        logRequest("GET", url: url)
+        do {
+            let (data, response) = try await session.data(from: url)
+            logResponse(response, data: data)
+            try validateResponse(response)
+            noteReachable()
+            return data
+        } catch {
+            logFailure("GET", url: url, error: error)
+            noteFailure(error)
+            throw error
+        }
     }
 
     // MARK: - Agents
@@ -478,39 +582,26 @@ class DashboardAPIClient: ObservableObject {
     // MARK: - HTTP Helpers
 
     private func get(_ path: String) async throws -> Data {
-        guard let url = URL(string: "\(baseURL)\(path)") else {
-            throw URLError(.badURL)
-        }
-        let (data, response) = try await session.data(from: url)
-        try validateResponse(response)
-        await MainActor.run { self.isReachable = true }
-        return data
+        let url = try requestURL(for: path)
+        return try await executeGET(url)
     }
 
     private func put(_ path: String, body: [String: Any]) async throws -> Data {
-        guard let url = URL(string: "\(baseURL)\(path)") else {
-            throw URLError(.badURL)
-        }
+        let url = try requestURL(for: path)
         var request = URLRequest(url: url)
         request.httpMethod = "PUT"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (data, response) = try await session.data(for: request)
-        try validateResponse(response)
-        return data
+        return try await execute(request)
     }
 
     private func patch(_ path: String, body: [String: Any]) async throws -> Data {
-        guard let url = URL(string: "\(baseURL)\(path)") else {
-            throw URLError(.badURL)
-        }
+        let url = try requestURL(for: path)
         var request = URLRequest(url: url)
         request.httpMethod = "PATCH"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        let (data, response) = try await session.data(for: request)
-        try validateResponse(response)
-        return data
+        return try await execute(request)
     }
 
     private func validateResponse(_ response: URLResponse) throws {
