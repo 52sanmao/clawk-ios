@@ -14,12 +14,21 @@ class DashboardAPIClient: ObservableObject {
     private var baseURL: String
 
     init(baseURL: String? = nil) {
-        // Migrate stale cached values (localhost/127.0.0.1 don't work on physical devices)
         let cachedURL = UserDefaults.standard.string(forKey: "dashboardBaseURL")
         if let cached = cachedURL, (cached.contains("127.0.0.1") || cached.contains("localhost")) {
             UserDefaults.standard.removeObject(forKey: "dashboardBaseURL")
         }
-        self.baseURL = baseURL ?? UserDefaults.standard.string(forKey: "dashboardBaseURL") ?? "http://100.96.61.83:4004"
+        self.baseURL = baseURL ?? Self.resolvedBaseURL()
+    }
+
+    private static func resolvedBaseURL() -> String {
+        if let stored = UserDefaults.standard.string(forKey: "dashboardBaseURL")?.trimmingCharacters(in: .whitespacesAndNewlines), !stored.isEmpty {
+            return stored
+        }
+        if let gateway = UserDefaults.standard.string(forKey: "gatewayHost")?.trimmingCharacters(in: .whitespacesAndNewlines), !gateway.isEmpty {
+            return gateway
+        }
+        return "http://100.96.61.83:4004"
     }
 
     func updateBaseURL(_ url: String) {

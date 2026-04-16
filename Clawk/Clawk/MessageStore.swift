@@ -780,6 +780,21 @@ class MessageStore: NSObject, ObservableObject {
         connect()
         pairDevice()
     }
+
+    func reloadConfiguration() {
+        disconnect()
+        stopPolling()
+        DispatchQueue.main.async {
+            self.isConnected = false
+            self.isConnecting = false
+            self.dashboardConnected = false
+        }
+        log("Reloading relay configuration from current app settings")
+        noteRelayBaseURL()
+        noteWSURL()
+        connect()
+        pairDevice()
+    }
     
     func pairDevice() {
         let url = Config.apiURL.appendingPathComponent("/pair")

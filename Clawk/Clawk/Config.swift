@@ -2,10 +2,34 @@ import Foundation
 import SwiftUI
 
 enum Config {
-    // Legacy relay backend kept separate from the primary IronClaw connection.
-    static let relayBaseURL = UserDefaults.standard.string(forKey: "relayBaseURL") ?? "http://localhost:3002"
+    private static let defaultRelayURL = "http://localhost:3002"
+
+    private static var gatewayFallbackURL: String {
+        let storedGateway = UserDefaults.standard.string(forKey: "gatewayHost")?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let storedGateway, !storedGateway.isEmpty {
+            return storedGateway
+        }
+        return "http://127.0.0.1:8642"
+    }
+
+    static var relayBaseURL: String {
+        let storedRelay = UserDefaults.standard.string(forKey: "relayBaseURL")?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let storedRelay, !storedRelay.isEmpty {
+            return storedRelay
+        }
+        return gatewayFallbackURL
+    }
 
     static var baseURL: String { relayBaseURL }
+
+    static func persistRelayBaseURL(_ url: String) {
+        let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            UserDefaults.standard.removeObject(forKey: "relayBaseURL")
+        } else {
+            UserDefaults.standard.set(trimmed, forKey: "relayBaseURL")
+        }
+    }
 
     static var websocketURL: URL {
         var components = URLComponents(string: relayBaseURL)!
@@ -17,6 +41,10 @@ enum Config {
 
     static var apiURL: URL {
         URL(string: relayBaseURL)!
+    }
+
+    static var usesLegacyLocalRelayDefault: Bool {
+        relayBaseURL == defaultRelayURL
     }
 
     // Generate once and store in UserDefaults for the legacy relay channel.

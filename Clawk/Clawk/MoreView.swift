@@ -427,6 +427,11 @@ struct SettingsFormContent: View {
                     Text(messageStore.isConnected ? "已连接" : "未连接")
                         .font(.caption)
                         .foregroundColor(.secondary)
+                    Spacer()
+                    Button("应用") {
+                        applyRelaySettings()
+                    }
+                    .font(.caption)
                 }
             } header: {
                 Text("Relay 服务（可选）")
@@ -505,8 +510,8 @@ struct SettingsFormContent: View {
         gatewayHost = gateway.gatewayHost
         gatewayPort = "\(gateway.gatewayPort)"
         gatewayToken = UserDefaults.standard.string(forKey: "gatewayToken") ?? ""
-        dashboardURL = UserDefaults.standard.string(forKey: "dashboardBaseURL") ?? "http://100.96.61.83:4004"
-        relayURL = Config.baseURL
+        dashboardURL = UserDefaults.standard.string(forKey: "dashboardBaseURL") ?? gateway.gatewayHost
+        relayURL = UserDefaults.standard.string(forKey: "relayBaseURL") ?? gateway.gatewayHost
     }
 
     private func applyGatewaySettings() {
@@ -514,16 +519,48 @@ struct SettingsFormContent: View {
         let normalized = GatewayConnection.normalizeGatewayEndpoint(gatewayHost, fallbackPort: port)
         gatewayHost = normalized.host
         gatewayPort = "\(normalized.port)"
+
+        let shouldFollowGatewayForDashboard = dashboardURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || dashboardURL == UserDefaults.standard.string(forKey: "dashboardBaseURL")
+            || dashboardURL == gateway.gatewayHost
+        let shouldFollowGatewayForRelay = relayURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || relayURL == UserDefaults.standard.string(forKey: "relayBaseURL")
+            || relayURL == gateway.gatewayHost
+            || Config.usesLegacyLocalRelayDefault
+
         gateway.updateConnection(host: normalized.host, port: normalized.port, token: gatewayToken)
+
+        if shouldFollowGatewayForDashboard {
+            dashboardURL = normalized.host
+            dashboardAPI.updateBaseURL(normalized.host)
+        }
+
+        if shouldFollowGatewayForRelay {
+            relayURL = normalized.host
+            Config.persistRelayBaseURL(normalized.host)
+            messageStore.reloadConfiguration()
+        }
     }
 
     private func applyDashboardSettings() {
-        dashboardAPI.updateBaseURL(dashboardURL)
+        let trimmed = dashboardURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolved = trimmed.isEmpty ? gateway.gatewayHost : trimmed
+        dashboardURL = resolved
+        dashboardAPI.updateBaseURL(resolved)
+    }
+
+    private func applyRelaySettings() {
+        let trimmed = relayURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolved = trimmed.isEmpty ? gateway.gatewayHost : trimmed
+        relayURL = resolved
+        Config.persistRelayBaseURL(resolved)
+        messageStore.reloadConfiguration()
     }
 
     private func applyAllSettings() {
         applyGatewaySettings()
         applyDashboardSettings()
+        applyRelaySettings()
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.success)
     }
