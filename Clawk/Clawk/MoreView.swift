@@ -247,6 +247,14 @@ struct GatewayDebugLogContent: View {
 
     private var combinedDebugExportText: String {
         [
+            "应用: 抓控",
+            "导出时间: \(ISO8601DateFormatter().string(from: Date()))",
+            "IronClaw 已连接: \(gateway.isConnected ? \"是\" : \"否\")",
+            "IronClaw 正在等待响应: \(gateway.isWaitingForResponse ? \"是\" : \"否\")",
+            "Dashboard 可访问: \(dashboardAPI.isReachable ? \"是\" : \"否\")",
+            "Relay 已连接: \(messageStore.isConnected ? \"是\" : \"否\")",
+            "Relay 连接中: \(messageStore.isConnecting ? \"是\" : \"否\")",
+            "",
             gateway.debugLogExportText,
             "",
             dashboardAPI.debugLogExportSection,

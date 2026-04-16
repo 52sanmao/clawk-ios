@@ -571,6 +571,17 @@ final class GatewayConnection: NSObject, ObservableObject {
         debugAppend("\(endpoint) failed: \(message)")
     }
 
+    private func bodyPreview(from data: Data?, limit: Int = 1200) -> String? {
+        guard let data, !data.isEmpty else { return nil }
+        guard var text = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
+            return nil
+        }
+        if text.count > limit {
+            text = String(text.prefix(limit)) + "…"
+        }
+        return text
+    }
+
     private func appendThreadStateLog(_ state: String, turnCount: Int, endpoint: String) {
         debugAppend("\(endpoint) → turns=\(turnCount), latestState=\(state)")
     }
@@ -611,11 +622,17 @@ final class GatewayConnection: NSObject, ObservableObject {
             threadId: threadId,
             timezone: TimeZone.current.identifier
         ))
+        if let preview = bodyPreview(from: body) {
+            debugAppend("POST \(endpoint) body=\(preview)")
+        }
         let request = authorizedRequest(url: url, method: "POST", body: body)
         do {
-            let (_, response) = try await urlSession.data(for: request)
+            let (data, response) = try await urlSession.data(for: request)
             appendHTTPStatusLog(response, endpoint: endpoint)
-            try validateHTTP(response)
+            if let preview = bodyPreview(from: data) {
+                debugAppend("\(endpoint) response=\(preview)")
+            }
+            try validateHTTP(response, data: data, endpoint: endpoint)
         } catch {
             appendHTTPFailureLog(error, endpoint: endpoint)
             throw error
@@ -776,7 +793,12 @@ final class GatewayConnection: NSObject, ObservableObject {
             if http.statusCode == 404, endpoint == "/tools/invoke" {
                 throw GatewayError.serverError(code: "tool_unavailable", message: "当前 IronClaw 部署未启用工具接口（/tools/invoke）。该功能在此服务器上不可用。")
             }
-            throw GatewayError.serverError(code: "http_\(http.statusCode)", message: "IronClaw 请求失败（HTTP \(http.statusCode)）")
+
+            var message = "IronClaw 请求失败（HTTP \(http.statusCode)）"
+            if let preview = bodyPreview(from: data) {
+                message += "：\(preview)"
+            }
+            throw GatewayError.serverError(code: "http_\(http.statusCode)", message: message)
         }
     }
 
