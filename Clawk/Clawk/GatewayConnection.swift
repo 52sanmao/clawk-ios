@@ -1746,33 +1746,6 @@ private struct IronClawRoutineRunInfo: Decodable {
 }
 
 private extension JSONDecoder {
-
-private struct IronClawRoutineSummary: Decodable {
-    let total: Int
-    let enabled: Int
-    let disabled: Int
-    let unverified: Int?
-    let failing: Int?
-    let runsToday: Int?
-}
-
-private struct IronClawRoutineRunsResponse: Decodable {
-    let routineId: String
-    let runs: [IronClawRoutineRunInfo]
-}
-
-private struct IronClawRoutineRunInfo: Decodable {
-    let id: String
-    let triggerType: String?
-    let startedAt: String?
-    let completedAt: String?
-    let status: String?
-    let resultSummary: String?
-    let tokensUsed: Int?
-    let jobId: String?
-}
-
-private extension JSONDecoder {
     static let snakeCase: JSONDecoder = {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
