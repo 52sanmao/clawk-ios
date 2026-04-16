@@ -99,6 +99,25 @@ final class GatewayConnection: NSObject, ObservableObject {
         gatewayLog.debug("\(msg, privacy: .public)")
     }
 
+    var debugLogExportText: String {
+        let connectionState = isConnected ? "已连接" : (isConnecting ? "连接中" : "未连接")
+        let lines: [String] = [
+            "应用: 抓控",
+            exportLine("导出时间", value: currentTimestampString()),
+            exportLine("IronClaw 地址", value: gatewayHost),
+            exportIntLine("端口", value: gatewayPort),
+            exportLine("连接状态", value: connectionState),
+            exportBoolLine("正在等待响应", value: isWaitingForResponse),
+            exportLine("connectionError", value: connectionError),
+            exportLine("chatStatus", value: chatStatus),
+            exportLine("chatError", value: chatError),
+            exportLine("当前线程", value: currentSessionId ?? currentSessionKey),
+            "调试日志:",
+        ]
+        let logLines = debugLog.isEmpty ? ["<empty>"] : debugLog
+        return (lines + logLines).joined(separator: "\n")
+    }
+
     // MARK: - Connection Management
 
     func connect() {
@@ -120,6 +139,7 @@ final class GatewayConnection: NSObject, ObservableObject {
                     self.agents = self.makeAgents(from: models)
                 }
                 debugAppend("Connected to IronClaw")
+                debugAppend("GET /v1/models 验证成功；这只表示模型接口可达，聊天链路仍需通过线程接口验证")
                 await loadInitialData()
             } catch {
                 let message = userFacingErrorMessage(error.localizedDescription)
@@ -451,8 +471,10 @@ final class GatewayConnection: NSObject, ObservableObject {
     private func sendThreadMessage(_ message: String, requestedThreadId: String?) async {
         do {
             let threadId = try await ensureThreadID(requestedThreadId)
+            debugAppend("Chat thread ready: \(threadId)")
             let baselineHistory = try await fetchThreadHistory(threadId: threadId)
             let baselineTurnCount = baselineHistory.turns.count
+            debugAppend("GET /api/chat/history → baseline turns=\(baselineTurnCount)")
 
             await MainActor.run {
                 self.currentSessionId = threadId
@@ -465,6 +487,7 @@ final class GatewayConnection: NSObject, ObservableObject {
             debugAppend("POST /api/chat/send → thread_id=\(threadId)")
             try await postThreadMessage(message, threadId: threadId)
             let poll = try await waitForThreadTurn(threadId: threadId, afterTurnCount: baselineTurnCount)
+            debugAppend("GET /api/chat/history → terminal state=\(poll.latestTurn.state)")
 
             await MainActor.run {
                 self.replaceMessagesFromThreadHistory(poll.history, threadId: threadId)
@@ -473,16 +496,18 @@ final class GatewayConnection: NSObject, ObservableObject {
                 let responseText = (poll.latestTurn.response ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
                 if responseText.isEmpty {
                     self.chatError = "IronClaw 未返回可显示内容"
+                    self.debugAppend("Chat completed but response text was empty")
                 }
             }
         } catch is CancellationError {
+            debugAppend("Chat cancelled")
             await MainActor.run {
                 self.isWaitingForResponse = false
                 self.chatStatus = nil
             }
         } catch {
             let message = userFacingErrorMessage(error.localizedDescription)
-            debugAppend("Chat failed: \(message)")
+            appendChatFailureLog(stage: "Chat", error: error)
             await MainActor.run {
                 self.isWaitingForResponse = false
                 self.chatStatus = nil
@@ -495,12 +520,14 @@ final class GatewayConnection: NSObject, ObservableObject {
         if let requestedThreadId,
            !requestedThreadId.isEmpty,
            isLikelyThreadID(requestedThreadId) {
+            debugAppend("Reusing requested thread_id=\(requestedThreadId)")
             return requestedThreadId
         }
 
         if let currentSessionId,
            !currentSessionId.isEmpty,
            isLikelyThreadID(currentSessionId) {
+            debugAppend("Reusing current thread_id=\(currentSessionId)")
             return currentSessionId
         }
 
@@ -513,22 +540,81 @@ final class GatewayConnection: NSObject, ObservableObject {
         return thread.id
     }
 
+    private func appendChatFailureLog(stage: String, error: Error) {
+        let rawMessage = error.localizedDescription
+        let userMessage = userFacingErrorMessage(rawMessage)
+        debugAppend("\(stage) failed: \(userMessage) | raw=\(rawMessage)")
+    }
+
+    private func appendHTTPStatusLog(_ response: URLResponse, endpoint: String) {
+        if let http = response as? HTTPURLResponse {
+            debugAppend("\(http.statusCode) \(endpoint)")
+        } else {
+            debugAppend("Non-HTTP response from \(endpoint)")
+        }
+    }
+
+    private func appendHTTPFailureLog(_ error: Error, endpoint: String) {
+        let message = userFacingErrorMessage(error.localizedDescription)
+        debugAppend("\(endpoint) failed: \(message)")
+    }
+
+    private func appendThreadStateLog(_ state: String, turnCount: Int, endpoint: String) {
+        debugAppend("\(endpoint) → turns=\(turnCount), latestState=\(state)")
+    }
+
+    private func latestThreadState(from history: IronClawThreadHistoryResponse) -> String {
+        history.turns.last?.state ?? "none"
+    }
+
+    private func logThreadHistorySnapshot(_ history: IronClawThreadHistoryResponse, endpoint: String) {
+        appendThreadStateLog(latestThreadState(from: history), turnCount: history.turns.count, endpoint: endpoint)
+    }
+
+    private func currentTimestampString() -> String {
+        ISO8601DateFormatter().string(from: Date())
+    }
+
+    private func exportLine(_ label: String, value: String?) -> String {
+        "\(label): \((value?.isEmpty == false) ? value! : "无")"
+    }
+
+    private func exportBoolLine(_ label: String, value: Bool) -> String {
+        "\(label): \(value ? "是" : "否")"
+    }
+
+    private func exportIntLine(_ label: String, value: Int) -> String {
+        "\(label): \(value)"
+    }
+
+    func clearDebugLog() {
+        debugLog.removeAll()
+    }
+
     private func postThreadMessage(_ content: String, threadId: String) async throws {
-        let url = try endpointURL(path: "/api/chat/send")
+        let endpoint = "/api/chat/send"
+        let url = try endpointURL(path: endpoint)
         let body = try JSONEncoder().encode(IronClawSendRequest(
             content: content,
             threadId: threadId,
             timezone: TimeZone.current.identifier
         ))
         let request = authorizedRequest(url: url, method: "POST", body: body)
-        let (_, response) = try await urlSession.data(for: request)
-        try validateHTTP(response)
+        do {
+            let (_, response) = try await urlSession.data(for: request)
+            appendHTTPStatusLog(response, endpoint: endpoint)
+            try validateHTTP(response)
+        } catch {
+            appendHTTPFailureLog(error, endpoint: endpoint)
+            throw error
+        }
     }
 
     private func waitForThreadTurn(threadId: String, afterTurnCount: Int, timeoutSeconds: TimeInterval = 45) async throws -> IronClawThreadPollResult {
         let deadline = Date().addingTimeInterval(timeoutSeconds)
         while Date() < deadline {
             let history = try await fetchThreadHistory(threadId: threadId)
+            logThreadHistorySnapshot(history, endpoint: "/api/chat/history")
             if let latestTurn = history.turns.last,
                history.turns.count > afterTurnCount,
                latestTurn.isTerminal {
@@ -536,24 +622,42 @@ final class GatewayConnection: NSObject, ObservableObject {
             }
             try await Task.sleep(nanoseconds: 300_000_000)
         }
+        debugAppend("/api/chat/history polling timed out after \(Int(timeoutSeconds))s")
         throw GatewayError.serverError(code: "timeout", message: "等待 IronClaw 对话结果超时")
     }
 
     private func fetchThreadHistory(threadId: String) async throws -> IronClawThreadHistoryResponse {
-        let encoded = threadId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? threadId
-        let url = try endpointURL(path: "/api/chat/history?thread_id=\(encoded)")
+        let endpoint = "/api/chat/history"
+        let url = try endpointURL(path: endpoint, queryItems: [
+            URLQueryItem(name: "thread_id", value: threadId)
+        ])
         let request = authorizedRequest(url: url, method: "GET")
-        let (data, response) = try await urlSession.data(for: request)
-        try validateHTTP(response)
-        return try JSONDecoder.snakeCase.decode(IronClawThreadHistoryResponse.self, from: data)
+        do {
+            let (data, response) = try await urlSession.data(for: request)
+            appendHTTPStatusLog(response, endpoint: endpoint)
+            try validateHTTP(response)
+            return try JSONDecoder.snakeCase.decode(IronClawThreadHistoryResponse.self, from: data)
+        } catch {
+            appendHTTPFailureLog(error, endpoint: endpoint)
+            throw error
+        }
     }
 
     private func createThread() async throws -> IronClawThreadInfo {
-        let url = try endpointURL(path: "/api/chat/thread/new")
+        let endpoint = "/api/chat/thread/new"
+        let url = try endpointURL(path: endpoint)
         let request = authorizedRequest(url: url, method: "POST")
-        let (data, response) = try await urlSession.data(for: request)
-        try validateHTTP(response)
-        return try JSONDecoder.snakeCase.decode(IronClawThreadInfo.self, from: data)
+        do {
+            let (data, response) = try await urlSession.data(for: request)
+            appendHTTPStatusLog(response, endpoint: endpoint)
+            try validateHTTP(response)
+            let thread = try JSONDecoder.snakeCase.decode(IronClawThreadInfo.self, from: data)
+            debugAppend("Created thread_id=\(thread.id)")
+            return thread
+        } catch {
+            appendHTTPFailureLog(error, endpoint: endpoint)
+            throw error
+        }
     }
 
     private func loadThreadHistoryIntoMessages(_ threadId: String) async throws {
@@ -599,7 +703,7 @@ final class GatewayConnection: NSObject, ObservableObject {
         return gatewayHost
     }
 
-    private func endpointURL(path: String) throws -> URL {
+    private func endpointURL(path: String, queryItems: [URLQueryItem]? = nil) throws -> URL {
         let normalized = Self.normalizeGatewayEndpoint(gatewayHost, fallbackPort: gatewayPort)
         let rawBase = normalized.host.trimmingCharacters(in: .whitespacesAndNewlines)
         let baseString: String
@@ -623,6 +727,9 @@ final class GatewayConnection: NSObject, ObservableObject {
         let suffix = path.hasPrefix("/") ? path : "/\(path)"
         let basePath = components.path == "/" ? "" : components.path
         components.path = basePath + suffix
+        if let queryItems {
+            components.queryItems = queryItems
+        }
 
         guard let url = components.url else {
             throw GatewayError.invalidRequest("IronClaw 地址无效")
@@ -864,7 +971,7 @@ private struct IronClawThreadTurn: Decodable {
 
     var isTerminal: Bool {
         let normalized = state.lowercased()
-        return normalized.contains("completed") || normalized.contains("failed") || normalized.contains("accepted")
+        return normalized.contains("completed") || normalized.contains("failed")
     }
 }
 
@@ -872,6 +979,12 @@ private struct IronClawSendRequest: Encodable {
     let content: String
     let threadId: String?
     let timezone: String?
+
+    enum CodingKeys: String, CodingKey {
+        case content
+        case threadId = "thread_id"
+        case timezone
+    }
 }
 
 private struct IronClawThreadPollResult {

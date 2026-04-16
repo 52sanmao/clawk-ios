@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 // MARK: - More View (list of secondary features)
 
@@ -181,19 +182,37 @@ struct RelayMessagesView: View {
 
 struct GatewayDebugLogContent: View {
     @ObservedObject var gateway: GatewayConnection
+    @State private var copyStatus: String?
 
     var body: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 2) {
-                    ForEach(Array(gateway.debugLog.enumerated()), id: \.offset) { index, entry in
-                        Text(entry)
-                            .font(.system(size: 10, design: .monospaced))
-                            .foregroundColor(debugEntryColor(entry))
-                            .id(index)
+                VStack(alignment: .leading, spacing: 12) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("导出内容会包含应用名“抓控”、连接状态、聊天状态、当前线程和全部调试日志。")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        if let copyStatus {
+                            Text(copyStatus)
+                                .font(.caption)
+                                .foregroundColor(.green)
+                        }
                     }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 8)
+                    .padding(.top, 8)
+
+                    LazyVStack(alignment: .leading, spacing: 2) {
+                        ForEach(Array(gateway.debugLog.enumerated()), id: \.offset) { index, entry in
+                            Text(entry)
+                                .font(.system(size: 10, design: .monospaced))
+                                .foregroundColor(debugEntryColor(entry))
+                                .id(index)
+                        }
+                    }
+                    .padding(8)
                 }
-                .padding(8)
             }
             .onChange(of: gateway.debugLog.count) {
                 if let last = gateway.debugLog.indices.last {
@@ -202,20 +221,26 @@ struct GatewayDebugLogContent: View {
             }
         }
         .toolbar {
-            ToolbarItem(placement: .navigationBarTrailing) {
+            ToolbarItemGroup(placement: .navigationBarTrailing) {
+                Button("复制全部") {
+                    UIPasteboard.general.string = gateway.debugLogExportText
+                    copyStatus = "已复制完整日志"
+                }
+
                 Button("清除") {
-                    gateway.debugLog.removeAll()
+                    gateway.clearDebugLog()
+                    copyStatus = nil
                 }
             }
         }
     }
 
     private func debugEntryColor(_ entry: String) -> Color {
-        if entry.contains("FAILED") || entry.contains("error") || entry.contains("Error") {
+        if entry.contains("FAILED") || entry.contains("error") || entry.contains("Error") || entry.contains("failed") {
             return .red
-        } else if entry.contains("OK") || entry.contains("succeeded") || entry.contains("connected") {
+        } else if entry.contains("OK") || entry.contains("succeeded") || entry.contains("connected") || entry.contains("Connected") {
             return .green
-        } else if entry.contains("chat event") || entry.contains("Agent event") {
+        } else if entry.contains("chat event") || entry.contains("Agent event") || entry.contains("/api/chat/") {
             return .blue
         }
         return .primary
