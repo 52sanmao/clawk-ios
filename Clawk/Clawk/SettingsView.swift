@@ -9,7 +9,6 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
 
     @State private var gatewayHost: String = ""
-    @State private var gatewayPort: String = ""
     @State private var gatewayToken: String = ""
     @State private var dashboardURL: String = ""
     @State private var relayURL: String = ""
@@ -25,17 +24,14 @@ struct SettingsView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
 
-                    Text("支持填写完整的 http:// 或 https:// IronClaw 地址，并保留路径前缀。")
+                    Text("只需要填写一次完整的 IronClaw 地址，App 会让聊天、Dashboard 和 Relay 默认跟随这个地址；支持保留 https:// 和路径前缀。")
                         .font(.caption)
                         .foregroundColor(.secondary)
 
-                    TextField("端口", text: $gatewayPort)
-                        .keyboardType(.numberPad)
-
-                    SecureField("IronClaw Bearer Token（可选）", text: $gatewayToken)
+                    SecureField("IronClaw Bearer Token", text: $gatewayToken)
                         .textInputAutocapitalization(.never)
 
-                    Text("聊天主链路使用 /api/chat/thread/new、/api/chat/send 与 /api/chat/history。")
+                    Text("聊天主链路使用 /api/chat/thread/new、/api/chat/send 与 /api/chat/history；其它模块默认共用同一地址。")
                         .font(.caption)
                         .foregroundColor(.secondary)
 
@@ -70,7 +66,7 @@ struct SettingsView: View {
 
                 // Dashboard connection
                 Section {
-                    TextField("Dashboard 地址", text: $dashboardURL)
+                    TextField("Dashboard 地址（留空时跟随 IronClaw）", text: $dashboardURL)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
 
@@ -97,12 +93,12 @@ struct SettingsView: View {
                 } header: {
                     Text("Dashboard")
                 } footer: {
-                    Text("通过 HTTP 连接 kishos-dashboard，用于获取补充数据和自动发现配置。")
+                    Text("默认复用 IronClaw 地址；只有在服务实际拆开部署时才需要单独覆盖。")
                 }
 
                 // Relay server (optional)
                 Section {
-                    TextField("Relay 地址", text: $relayURL)
+                    TextField("Relay 地址（留空时跟随 IronClaw）", text: $relayURL)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
 
@@ -122,7 +118,7 @@ struct SettingsView: View {
                 } header: {
                     Text("Relay 服务（可选）")
                 } footer: {
-                    Text("用于推送通知和操作卡片，不影响核心聊天功能。")
+                    Text("默认复用 IronClaw 地址；只有推送服务单独部署时才需要单独覆盖。")
                 }
 
                 // Auto-discover
@@ -201,36 +197,43 @@ struct SettingsView: View {
     }
 
     private func loadCurrentSettings() {
-        gatewayHost = gateway.gatewayHost
-        gatewayPort = "\(gateway.gatewayPort)"
-        gatewayToken = UserDefaults.standard.string(forKey: "gatewayToken") ?? ""
-        dashboardURL = UserDefaults.standard.string(forKey: "dashboardBaseURL") ?? gateway.gatewayHost
-        relayURL = UserDefaults.standard.string(forKey: "relayBaseURL") ?? gateway.gatewayHost
+        gatewayHost = gateway.gatewayHost.isEmpty ? Config.defaultGatewayBaseURL : gateway.gatewayHost
+        gatewayToken = {
+            let stored = UserDefaults.standard.string(forKey: "gatewayToken")?.trimmingCharacters(in: .whitespacesAndNewlines)
+            return (stored?.isEmpty == false ? stored : nil) ?? Config.defaultGatewayToken
+        }()
+
+        let storedDashboard = UserDefaults.standard.string(forKey: "dashboardBaseURL")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        dashboardURL = storedDashboard == gateway.gatewayHost ? "" : storedDashboard
+
+        let storedRelay = UserDefaults.standard.string(forKey: "relayBaseURL")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        relayURL = storedRelay == gateway.gatewayHost ? "" : storedRelay
     }
 
     private func applyGatewaySettings() {
-        let port = Int(gatewayPort) ?? 8642
-        let normalized = GatewayConnection.normalizeGatewayEndpoint(gatewayHost, fallbackPort: port)
+        let normalized = GatewayConnection.normalizeGatewayEndpoint(gatewayHost, fallbackPort: 443)
         gatewayHost = normalized.host
-        gatewayPort = "\(normalized.port)"
 
+        let previousGateway = gateway.gatewayHost
+        let storedDashboard = UserDefaults.standard.string(forKey: "dashboardBaseURL")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let storedRelay = UserDefaults.standard.string(forKey: "relayBaseURL")?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let shouldFollowGatewayForDashboard = dashboardURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || dashboardURL == UserDefaults.standard.string(forKey: "dashboardBaseURL")
-            || dashboardURL == gateway.gatewayHost
+            || storedDashboard.isEmpty
+            || storedDashboard == previousGateway
         let shouldFollowGatewayForRelay = relayURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            || relayURL == UserDefaults.standard.string(forKey: "relayBaseURL")
-            || relayURL == gateway.gatewayHost
+            || storedRelay.isEmpty
+            || storedRelay == previousGateway
             || Config.usesLegacyLocalRelayDefault
 
         gateway.updateConnection(host: normalized.host, port: normalized.port, token: gatewayToken)
 
         if shouldFollowGatewayForDashboard {
-            dashboardURL = normalized.host
+            dashboardURL = ""
             dashboardAPI.updateBaseURL(normalized.host)
         }
 
         if shouldFollowGatewayForRelay {
-            relayURL = normalized.host
+            relayURL = ""
             Config.persistRelayBaseURL(normalized.host)
             messageStore.reloadConfiguration()
         }
@@ -239,14 +242,14 @@ struct SettingsView: View {
     private func applyDashboardSettings() {
         let trimmed = dashboardURL.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolved = trimmed.isEmpty ? gateway.gatewayHost : trimmed
-        dashboardURL = resolved
+        dashboardURL = trimmed.isEmpty ? "" : resolved
         dashboardAPI.updateBaseURL(resolved)
     }
 
     private func applyRelaySettings() {
         let trimmed = relayURL.trimmingCharacters(in: .whitespacesAndNewlines)
         let resolved = trimmed.isEmpty ? gateway.gatewayHost : trimmed
-        relayURL = resolved
+        relayURL = trimmed.isEmpty ? "" : resolved
         Config.persistRelayBaseURL(resolved)
         messageStore.reloadConfiguration()
     }
@@ -268,9 +271,6 @@ struct SettingsView: View {
                 await MainActor.run {
                     if let url = config.url {
                         gatewayHost = url
-                        if let port = URLComponents(string: url)?.port {
-                            gatewayPort = "\(port)"
-                        }
                     }
                     if let token = config.token {
                         gatewayToken = token

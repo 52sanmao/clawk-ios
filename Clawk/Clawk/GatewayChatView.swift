@@ -202,8 +202,7 @@ struct GatewaySettingsView: View {
     @ObservedObject var gateway: GatewayConnection
     @Environment(\.dismiss) private var dismiss
     
-    @State private var host = "localhost"
-    @State private var port = "18789"
+    @State private var host = Config.defaultGatewayBaseURL
     @State private var showClearConfirmation = false
     
     var body: some View {
@@ -213,14 +212,11 @@ struct GatewaySettingsView: View {
                     TextField("IronClaw 地址", text: $host)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                    
-                    TextField("端口", text: $port)
-                        .keyboardType(.numberPad)
 
-                    SecureField("IronClaw Bearer Token（可选）", text: .constant(""))
+                    SecureField("IronClaw Bearer Token", text: .constant(Config.defaultGatewayToken))
                         .disabled(true)
 
-                    Text("IronClaw 使用 HTTP API 与 SSE 流式响应；如需修改令牌，请前往主设置页。")
+                    Text("只需要完整地址和令牌，不需要单独填写端口；如需修改令牌，请前往主设置页。")
                         .font(.caption)
                         .foregroundColor(.secondary)
 

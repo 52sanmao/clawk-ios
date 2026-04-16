@@ -2,14 +2,15 @@ import Foundation
 import SwiftUI
 
 enum Config {
-    private static let defaultRelayURL = "http://localhost:3002"
+    static let defaultGatewayBaseURL = "https://rare-lark.agent4.near.ai/"
+    static let defaultGatewayToken = "b5af51dc17344eab80981e47f5ab5784a0f1df4846e7229fba421ae97021aa1e"
 
     private static var gatewayFallbackURL: String {
         let storedGateway = UserDefaults.standard.string(forKey: "gatewayHost")?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let storedGateway, !storedGateway.isEmpty {
             return storedGateway
         }
-        return "http://127.0.0.1:8642"
+        return defaultGatewayBaseURL
     }
 
     static var relayBaseURL: String {
@@ -44,7 +45,8 @@ enum Config {
     }
 
     static var usesLegacyLocalRelayDefault: Bool {
-        relayBaseURL == defaultRelayURL
+        relayBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).lowercased().contains("localhost")
+            || relayBaseURL.trimmingCharacters(in: .whitespacesAndNewlines).contains("127.0.0.1")
     }
 
     // Generate once and store in UserDefaults for the legacy relay channel.

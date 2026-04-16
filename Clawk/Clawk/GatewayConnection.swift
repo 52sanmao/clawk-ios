@@ -74,14 +74,26 @@ final class GatewayConnection: NSObject, ObservableObject {
     private var deviceToken: String
 
     init(host: String? = nil, port: Int? = nil, token: String? = nil) {
-        self.gatewayHost = host ?? UserDefaults.standard.string(forKey: "gatewayHost") ?? "http://127.0.0.1:8642"
-        self.gatewayPort = port ?? UserDefaults.standard.integer(forKey: "gatewayPort").nonZero ?? 8642
-        self.gatewayToken = token ?? UserDefaults.standard.string(forKey: "gatewayToken") ?? ""
+        let storedHost = UserDefaults.standard.string(forKey: "gatewayHost")?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let resolvedHost = host ?? ((storedHost?.isEmpty == false ? storedHost : nil) ?? Config.defaultGatewayBaseURL)
+        let normalized = Self.normalizeGatewayEndpoint(resolvedHost, fallbackPort: port ?? 443)
+        let storedToken = UserDefaults.standard.string(forKey: "gatewayToken")?.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        self.gatewayHost = normalized.host
+        self.gatewayPort = port ?? normalized.port
+        self.gatewayToken = token ?? ((storedToken?.isEmpty == false ? storedToken : nil) ?? Config.defaultGatewayToken)
         self.deviceToken = UserDefaults.standard.string(forKey: "gatewayDeviceToken") ?? UUID().uuidString
         super.init()
 
         if UserDefaults.standard.string(forKey: "gatewayDeviceToken") == nil {
             UserDefaults.standard.set(deviceToken, forKey: "gatewayDeviceToken")
+        }
+        if storedHost == nil || storedHost?.isEmpty == true {
+            UserDefaults.standard.set(normalized.host, forKey: "gatewayHost")
+            UserDefaults.standard.set(normalized.port, forKey: "gatewayPort")
+        }
+        if storedToken == nil || storedToken?.isEmpty == true {
+            UserDefaults.standard.set(self.gatewayToken, forKey: "gatewayToken")
         }
     }
 

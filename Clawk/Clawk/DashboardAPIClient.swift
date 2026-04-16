@@ -2,7 +2,7 @@ import Foundation
 import Combine
 
 // MARK: - Dashboard API Client
-/// Direct HTTP client for kishos-dashboard (localhost:4004)
+/// Direct HTTP client for dashboard endpoints hosted under the same IronClaw base URL.
 
 class DashboardAPIClient: ObservableObject {
 
@@ -28,7 +28,7 @@ class DashboardAPIClient: ObservableObject {
         if let gateway = UserDefaults.standard.string(forKey: "gatewayHost")?.trimmingCharacters(in: .whitespacesAndNewlines), !gateway.isEmpty {
             return gateway
         }
-        return "http://100.96.61.83:4004"
+        return Config.defaultGatewayBaseURL
     }
 
     func updateBaseURL(_ url: String) {

@@ -15,27 +15,15 @@ struct ClawkApp: App {
                 .environmentObject(messageStore)
                 .onAppear {
                     Task {
-                        // Check dashboard health first
-                        await dashboardAPI.checkHealth()
-
-                        print("[App] Gateway token from UserDefaults: \(gateway.gatewayToken.isEmpty ? "EMPTY" : String(gateway.gatewayToken.prefix(8)) + "...")")
-
-                        // Auto-discover gateway config from dashboard if no token saved
-                        if gateway.gatewayToken.isEmpty {
-                            do {
-                                let config = try await dashboardAPI.fetchGatewayConfig()
-                                if let url = config.url {
-                                    let token = config.token ?? ""
-                                    let discoveredPort = URLComponents(string: url)?.port ?? 18790
-                                    gateway.updateConnection(host: url, port: discoveredPort, token: token)
-                                    return
-                                }
-                            } catch {
-                                print("[App] Auto-discover failed: \(error)")
-                            }
+                        let normalized = GatewayConnection.normalizeGatewayEndpoint(gateway.gatewayHost, fallbackPort: gateway.gatewayPort)
+                        dashboardAPI.updateBaseURL(normalized.host)
+                        if UserDefaults.standard.string(forKey: "relayBaseURL")?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+                            Config.persistRelayBaseURL(normalized.host)
+                            messageStore.reloadConfiguration()
                         }
 
-                        // Connect with existing config
+                        await dashboardAPI.checkHealth()
+
                         if !gateway.isConnected && !gateway.isConnecting {
                             gateway.connect()
                         }
