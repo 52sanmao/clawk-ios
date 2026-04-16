@@ -1,216 +1,6 @@
 import Foundation
 import Combine
 
-struct DashboardSnapshot: Codable {
-    var agents: [DashboardAgent]?
-    var sessions: [DashboardSession]?
-    var totalCost: Double?
-    var lastUpdated: String?
-}
-
-struct DashboardAgent: Codable, Identifiable {
-    let id: String
-    let name: String
-    let emoji: String?
-    let color: String?
-    let model: String?
-    let status: String?
-    let skills: [AgentSkill]?
-    let activeSkills: [String]?
-}
-
-struct AgentSkill: Codable, Identifiable {
-    let id: String
-    let name: String
-    let icon: String?
-    let category: String?
-}
-
-struct DashboardSession: Codable, Identifiable {
-    let id: String
-    let agentId: String?
-    let agentName: String?
-    let agentEmoji: String?
-    let agentColor: String?
-    let model: String?
-    let messageCount: Int?
-    let totalCost: Double?
-    let tokensUsed: TokenUsage?
-    let updatedAt: String?
-    let startedAt: String?
-    let projectPath: String?
-    let source: String?
-    let status: String?
-    let folderTrail: [FolderTrailItem]?
-}
-
-struct TokenUsage: Codable {
-    let input: Int?
-    let output: Int?
-    let cached: Int?
-}
-
-struct FolderTrailItem: Codable {
-    let path: String
-    let timestamp: String?
-    let source: String?
-}
-
-struct OpenClawStatus: Codable {
-    let cronJobs: [CronJob]?
-    let heartbeats: [Heartbeat]?
-    let summary: OpenClawSummary?
-    let generatedAt: String?
-}
-
-struct CronJob: Codable, Identifiable {
-    let id: String
-    let name: String
-    let agentId: String?
-    let enabled: Bool
-    let status: String
-    let schedule: String
-    let isHeartbeat: Bool
-    let lastRunAtMs: TimeInterval?
-    let nextRunAtMs: TimeInterval?
-}
-
-struct Heartbeat: Codable, Identifiable {
-    let agentId: String
-    let enabled: Bool
-    let status: String
-    let every: String?
-    let model: String?
-    let lastRunAtMs: TimeInterval?
-    let nextRunAtMs: TimeInterval?
-
-    var id: String { agentId }
-}
-
-struct OpenClawSummary: Codable {
-    let totalCronJobs: Int
-    let enabledCronJobs: Int
-    let cronErrors: Int
-    let heartbeatCount: Int
-    let staleHeartbeats: Int
-    let nextRunAtMs: TimeInterval?
-    let lastRunAtMs: TimeInterval?
-}
-
-struct DashboardUpdate: Codable {
-    let type: String
-    let dashboardType: String
-    let data: DashboardUpdateData
-    let timestamp: TimeInterval
-}
-
-struct DashboardUpdateData: Codable {
-    let agents: [DashboardAgent]?
-    let sessions: [DashboardSession]?
-    let totalCost: Double?
-    let cronJobs: [CronJob]?
-    let heartbeats: [Heartbeat]?
-    let summary: OpenClawSummary?
-    let generatedAt: String?
-    let tasks: [DashboardTask]?
-    let stats: TaskStats?
-}
-
-struct DashboardTask: Codable, Identifiable {
-    let id: String
-    let title: String
-    let agent_id: String?
-    let agent_name: String?
-    let agent_emoji: String?
-    let status: String
-    let started_at: String?
-    let completed_at: String?
-}
-
-struct TaskStats: Codable {
-    let pending: Int?
-    let active: Int?
-    let completed: Int?
-    let blocked: Int?
-}
-
-struct SessionMessage: Codable, Identifiable {
-    let id: String
-    let role: String
-    let content: String
-    let timestamp: String?
-    let cost: Double?
-    let model: String?
-    let toolCalls: [SessionToolCall]?
-    let toolResults: [SessionToolResult]?
-
-    enum CodingKeys: String, CodingKey {
-        case id, role, content, timestamp, cost, model
-        case toolCalls, toolResults
-    }
-
-    private enum SnakeCaseKeys: String, CodingKey {
-        case toolCalls = "tool_calls"
-        case toolResults = "tool_results"
-    }
-
-    init(
-        id: String,
-        role: String,
-        content: String,
-        timestamp: String?,
-        cost: Double?,
-        model: String?,
-        toolCalls: [SessionToolCall]?,
-        toolResults: [SessionToolResult]?
-    ) {
-        self.id = id
-        self.role = role
-        self.content = content
-        self.timestamp = timestamp
-        self.cost = cost
-        self.model = model
-        self.toolCalls = toolCalls
-        self.toolResults = toolResults
-    }
-
-    init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        self.id = (try? container.decode(String.self, forKey: .id)) ?? UUID().uuidString
-        self.role = try container.decode(String.self, forKey: .role)
-        self.content = (try? container.decode(String.self, forKey: .content)) ?? ""
-        self.timestamp = try? container.decode(String.self, forKey: .timestamp)
-        self.cost = try? container.decode(Double.self, forKey: .cost)
-        self.model = try? container.decode(String.self, forKey: .model)
-
-        if let toolCalls = try? container.decode([SessionToolCall].self, forKey: .toolCalls) {
-            self.toolCalls = toolCalls
-        } else {
-            let snake = try decoder.container(keyedBy: SnakeCaseKeys.self)
-            self.toolCalls = try? snake.decode([SessionToolCall].self, forKey: .toolCalls)
-        }
-
-        if let toolResults = try? container.decode([SessionToolResult].self, forKey: .toolResults) {
-            self.toolResults = toolResults
-        } else {
-            let snake = try decoder.container(keyedBy: SnakeCaseKeys.self)
-            self.toolResults = try? snake.decode([SessionToolResult].self, forKey: .toolResults)
-        }
-    }
-}
-
-struct SessionToolCall: Codable {
-    let id: String?
-    let name: String?
-    let arguments: [String: String]?
-}
-
-struct SessionToolResult: Codable {
-    let toolName: String?
-    let status: String?
-    let content: String?
-}
-
 final class DashboardAPIClient: ObservableObject {
     @Published var isReachable = false
     @Published var lastError: String?
@@ -1000,6 +790,28 @@ final class DashboardAPIClient: ObservableObject {
             case uptime, version, agents, sessions
             case connectedDevices = "connected_devices"
         }
+    }
+}
+
+private extension SessionMessage {
+    init(
+        id: String,
+        role: String,
+        content: String,
+        timestamp: String?,
+        cost: Double?,
+        model: String?,
+        toolCalls: [SessionToolCall]?,
+        toolResults: [SessionToolResult]?
+    ) {
+        self.id = id
+        self.role = role
+        self.content = content
+        self.timestamp = timestamp
+        self.cost = cost
+        self.model = model
+        self.toolCalls = toolCalls
+        self.toolResults = toolResults
     }
 }
 
