@@ -1,11 +1,217 @@
 import Foundation
 import Combine
 
-// MARK: - Dashboard API Client
-/// Direct HTTP client for dashboard endpoints hosted under the same IronClaw base URL.
+struct DashboardSnapshot: Codable {
+    var agents: [DashboardAgent]?
+    var sessions: [DashboardSession]?
+    var totalCost: Double?
+    var lastUpdated: String?
+}
 
-class DashboardAPIClient: ObservableObject {
+struct DashboardAgent: Codable, Identifiable {
+    let id: String
+    let name: String
+    let emoji: String?
+    let color: String?
+    let model: String?
+    let status: String?
+    let skills: [AgentSkill]?
+    let activeSkills: [String]?
+}
 
+struct AgentSkill: Codable, Identifiable {
+    let id: String
+    let name: String
+    let icon: String?
+    let category: String?
+}
+
+struct DashboardSession: Codable, Identifiable {
+    let id: String
+    let agentId: String?
+    let agentName: String?
+    let agentEmoji: String?
+    let agentColor: String?
+    let model: String?
+    let messageCount: Int?
+    let totalCost: Double?
+    let tokensUsed: TokenUsage?
+    let updatedAt: String?
+    let startedAt: String?
+    let projectPath: String?
+    let source: String?
+    let status: String?
+    let folderTrail: [FolderTrailItem]?
+}
+
+struct TokenUsage: Codable {
+    let input: Int?
+    let output: Int?
+    let cached: Int?
+}
+
+struct FolderTrailItem: Codable {
+    let path: String
+    let timestamp: String?
+    let source: String?
+}
+
+struct OpenClawStatus: Codable {
+    let cronJobs: [CronJob]?
+    let heartbeats: [Heartbeat]?
+    let summary: OpenClawSummary?
+    let generatedAt: String?
+}
+
+struct CronJob: Codable, Identifiable {
+    let id: String
+    let name: String
+    let agentId: String?
+    let enabled: Bool
+    let status: String
+    let schedule: String
+    let isHeartbeat: Bool
+    let lastRunAtMs: TimeInterval?
+    let nextRunAtMs: TimeInterval?
+}
+
+struct Heartbeat: Codable, Identifiable {
+    let agentId: String
+    let enabled: Bool
+    let status: String
+    let every: String?
+    let model: String?
+    let lastRunAtMs: TimeInterval?
+    let nextRunAtMs: TimeInterval?
+
+    var id: String { agentId }
+}
+
+struct OpenClawSummary: Codable {
+    let totalCronJobs: Int
+    let enabledCronJobs: Int
+    let cronErrors: Int
+    let heartbeatCount: Int
+    let staleHeartbeats: Int
+    let nextRunAtMs: TimeInterval?
+    let lastRunAtMs: TimeInterval?
+}
+
+struct DashboardUpdate: Codable {
+    let type: String
+    let dashboardType: String
+    let data: DashboardUpdateData
+    let timestamp: TimeInterval
+}
+
+struct DashboardUpdateData: Codable {
+    let agents: [DashboardAgent]?
+    let sessions: [DashboardSession]?
+    let totalCost: Double?
+    let cronJobs: [CronJob]?
+    let heartbeats: [Heartbeat]?
+    let summary: OpenClawSummary?
+    let generatedAt: String?
+    let tasks: [DashboardTask]?
+    let stats: TaskStats?
+}
+
+struct DashboardTask: Codable, Identifiable {
+    let id: String
+    let title: String
+    let agent_id: String?
+    let agent_name: String?
+    let agent_emoji: String?
+    let status: String
+    let started_at: String?
+    let completed_at: String?
+}
+
+struct TaskStats: Codable {
+    let pending: Int?
+    let active: Int?
+    let completed: Int?
+    let blocked: Int?
+}
+
+struct SessionMessage: Codable, Identifiable {
+    let id: String
+    let role: String
+    let content: String
+    let timestamp: String?
+    let cost: Double?
+    let model: String?
+    let toolCalls: [SessionToolCall]?
+    let toolResults: [SessionToolResult]?
+
+    enum CodingKeys: String, CodingKey {
+        case id, role, content, timestamp, cost, model
+        case toolCalls, toolResults
+    }
+
+    private enum SnakeCaseKeys: String, CodingKey {
+        case toolCalls = "tool_calls"
+        case toolResults = "tool_results"
+    }
+
+    init(
+        id: String,
+        role: String,
+        content: String,
+        timestamp: String?,
+        cost: Double?,
+        model: String?,
+        toolCalls: [SessionToolCall]?,
+        toolResults: [SessionToolResult]?
+    ) {
+        self.id = id
+        self.role = role
+        self.content = content
+        self.timestamp = timestamp
+        self.cost = cost
+        self.model = model
+        self.toolCalls = toolCalls
+        self.toolResults = toolResults
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = (try? container.decode(String.self, forKey: .id)) ?? UUID().uuidString
+        self.role = try container.decode(String.self, forKey: .role)
+        self.content = (try? container.decode(String.self, forKey: .content)) ?? ""
+        self.timestamp = try? container.decode(String.self, forKey: .timestamp)
+        self.cost = try? container.decode(Double.self, forKey: .cost)
+        self.model = try? container.decode(String.self, forKey: .model)
+
+        if let toolCalls = try? container.decode([SessionToolCall].self, forKey: .toolCalls) {
+            self.toolCalls = toolCalls
+        } else {
+            let snake = try decoder.container(keyedBy: SnakeCaseKeys.self)
+            self.toolCalls = try? snake.decode([SessionToolCall].self, forKey: .toolCalls)
+        }
+
+        if let toolResults = try? container.decode([SessionToolResult].self, forKey: .toolResults) {
+            self.toolResults = toolResults
+        } else {
+            let snake = try decoder.container(keyedBy: SnakeCaseKeys.self)
+            self.toolResults = try? snake.decode([SessionToolResult].self, forKey: .toolResults)
+        }
+    }
+}
+
+struct SessionToolCall: Codable {
+    let id: String?
+    let name: String?
+    let arguments: [String: String]?
+}
+
+struct SessionToolResult: Codable {
+    let toolName: String?
+    let status: String?
+    let content: String?
+}
+
+final class DashboardAPIClient: ObservableObject {
     @Published var isReachable = false
     @Published var lastError: String?
     @Published var debugLog: [String] = []
@@ -14,8 +220,8 @@ class DashboardAPIClient: ObservableObject {
     private var baseURL: String
 
     init(baseURL: String? = nil) {
-        let cachedURL = UserDefaults.standard.string(forKey: "dashboardBaseURL")
-        if let cached = cachedURL, (cached.contains("127.0.0.1") || cached.contains("localhost")) {
+        let cachedURL = UserDefaults.standard.string(forKey: "dashboardBaseURL")?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let cachedURL, (cachedURL.contains("127.0.0.1") || cachedURL.contains("localhost")) {
             UserDefaults.standard.removeObject(forKey: "dashboardBaseURL")
         }
         self.baseURL = baseURL ?? Self.resolvedBaseURL()
@@ -32,9 +238,10 @@ class DashboardAPIClient: ObservableObject {
     }
 
     func updateBaseURL(_ url: String) {
-        self.baseURL = url
-        UserDefaults.standard.set(url, forKey: "dashboardBaseURL")
-        log("Updated Dashboard base URL to \(url)")
+        let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        baseURL = trimmed.isEmpty ? Config.defaultGatewayBaseURL : trimmed
+        UserDefaults.standard.set(baseURL, forKey: "dashboardBaseURL")
+        log("Updated Dashboard base URL to \(baseURL)")
     }
 
     var debugLogExportSection: String {
@@ -51,6 +258,295 @@ class DashboardAPIClient: ObservableObject {
 
     func clearDebugLog() {
         debugLog.removeAll()
+    }
+
+    func fetchAgents() async throws -> [DashboardAgent] {
+        [
+            DashboardAgent(
+                id: "ironclaw",
+                name: "IronClaw",
+                emoji: "🤖",
+                color: "#6B7280",
+                model: nil,
+                status: isReachable ? "online" : nil,
+                skills: nil,
+                activeSkills: nil
+            )
+        ]
+    }
+
+    func fetchSessions(days: Int = 7, limit: Int = 50, offset: Int = 0) async throws -> SessionsResponse {
+        let response = try await getThreadList()
+        let allThreads = ([response.assistantThread].compactMap { $0 } + response.threads)
+            .sorted { $0.updatedAt > $1.updatedAt }
+        let safeLimit = min(max(limit, 1), 200)
+        let slice = Array(allThreads.dropFirst(offset).prefix(safeLimit))
+        let sessions = slice.map(mapThreadInfoToDashboardSession)
+        return SessionsResponse(
+            sessions: sessions,
+            pagination: SessionsResponse.Pagination(total: allThreads.count, limit: safeLimit, offset: offset)
+        )
+    }
+
+    func fetchSessionMessages(sessionId: String, limit: Int = 200) async throws -> [SessionMessage] {
+        let history = try await getThreadHistory(threadId: sessionId, limit: min(max(limit, 1), 500))
+        return mapTurnsToSessionMessages(history)
+    }
+
+    func fetchCosts(period: String = "week") async throws -> CostData {
+        CostData(totalCost: nil, byAgent: nil, byModel: nil, byDay: nil, sessionsCount: nil, tokensUsed: nil)
+    }
+
+    func fetchAllSessions(days: Int, batchSize: Int = 200) async throws -> [DashboardSession] {
+        var allSessions: [DashboardSession] = []
+        var offset = 0
+
+        while true {
+            let response = try await fetchSessions(days: days, limit: batchSize, offset: offset)
+            let page = response.sessions ?? []
+            allSessions.append(contentsOf: page)
+
+            if page.isEmpty || page.count < batchSize {
+                break
+            }
+            if let total = response.pagination?.total, allSessions.count >= total {
+                break
+            }
+            offset += page.count
+        }
+
+        return allSessions
+    }
+
+    func fetchDisplayCosts(period: String = "week", preferences: CostDisplayPreferences) async throws -> CostData {
+        guard preferences.appliesSubscriptionCoverage else {
+            return try await fetchCosts(period: period)
+        }
+
+        let sessions = try await fetchAllSessions(days: Self.sessionLookbackDays(for: period))
+        return Self.makeDisplayCostData(from: sessions, period: period, preferences: preferences)
+    }
+
+    func fetchMemoryFiles() async throws -> [MemoryFile] {
+        let data = try await get("/api/memory/list")
+        let response = try JSONDecoder().decode(MemoryListResponse.self, from: data)
+        return response.entries.filter { !$0.isDir }.map {
+            MemoryFile(
+                path: $0.path,
+                name: $0.name,
+                group: nil,
+                groupLabel: nil,
+                size: nil,
+                mtime: Self.mtimeEpoch(from: $0.updatedAt)
+            )
+        }
+    }
+
+    func readMemoryFile(path: String) async throws -> MemoryFileContent {
+        let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? path
+        let data = try await get("/api/memory/read?path=\(encoded)")
+        let response = try JSONDecoder().decode(MemoryReadResponse.self, from: data)
+        return MemoryFileContent(content: response.content, mtime: Self.mtimeEpoch(from: response.updatedAt), path: response.path)
+    }
+
+    func updateMemoryFile(path: String, content: String, expectedMtime: Double? = nil) async throws -> MemoryFileUpdateResult {
+        let data = try await post("/api/memory/write", body: ["path": path, "content": content])
+        if let decoded = try? JSONDecoder().decode(MemoryFileUpdateResult.self, from: data) {
+            return decoded
+        }
+        return MemoryFileUpdateResult(ok: true, path: path, mtime: expectedMtime, status: "written")
+    }
+
+    func fetchTasks() async throws -> TasksResponse {
+        let data = try await get("/api/routines")
+        let response = try JSONDecoder().decode(RoutinesResponse.self, from: data)
+        let tasks = response.routines.map(mapRoutineToTask)
+        return TasksResponse(tasks: tasks, agents: nil, stats: nil)
+    }
+
+    func updateTaskStatus(id: String, status: String) async throws {
+        let enabled = ["enabled", "active", "running", "in_progress"].contains(status.lowercased())
+        _ = try await post("/api/routines/\(id)/toggle", body: ["enabled": enabled])
+    }
+
+    func fetchSummaries(days: Int = 30) async throws -> SummariesResponse {
+        SummariesResponse(
+            summaries: [["title": "最近 \(days) 天摘要暂未在 iOS 客户端映射", "source": "gateway"]],
+            totalSessions: nil,
+            summarizedCount: nil,
+            pendingCount: nil
+        )
+    }
+
+    func fetchOpenClawStatus() async throws -> OpenClawStatus {
+        do {
+            let data = try await get("/api/gateway/status")
+            if let response = try? JSONDecoder().decode(GatewayStatusSummary.self, from: data) {
+                return mapGatewayStatusToOpenClawStatus(response)
+            }
+        } catch {
+            log("GET /api/gateway/status unavailable, falling back to empty status")
+        }
+
+        return OpenClawStatus(
+            cronJobs: nil,
+            heartbeats: nil,
+            summary: OpenClawSummary(
+                totalCronJobs: 0,
+                enabledCronJobs: 0,
+                cronErrors: 0,
+                heartbeatCount: 0,
+                staleHeartbeats: 0,
+                nextRunAtMs: nil,
+                lastRunAtMs: nil
+            ),
+            generatedAt: ISO8601DateFormatter().string(from: Date())
+        )
+    }
+
+    func fetchGatewayConfig() async throws -> GatewayConfig {
+        GatewayConfig(url: baseURL, token: normalizedGatewayToken)
+    }
+
+    func fetchChatSessions(days: Int = 7, limit: Int = 50) async throws -> ChatSessionsResponse {
+        let response = try await fetchSessions(days: days, limit: limit, offset: 0)
+        let sessions = (response.sessions ?? []).map { session in
+            [
+                "id": session.id,
+                "agentName": session.agentName ?? "聊天会话",
+                "updatedAt": session.updatedAt ?? session.startedAt ?? "",
+                "status": session.status ?? "Idle"
+            ]
+        }
+        return ChatSessionsResponse(sessions: sessions)
+    }
+
+    func fetchChatHistory(sessionId: String, limit: Int = 100) async throws -> [SessionMessage] {
+        try await fetchSessionMessages(sessionId: sessionId, limit: limit)
+    }
+
+    func fetchLiveFiles() async throws -> LiveFilesResponse {
+        LiveFilesResponse(generatedAt: ISO8601DateFormatter().string(from: Date()), files: nil)
+    }
+
+    func checkHealth() async {
+        do {
+            try await checkGatewayOnlyHealth()
+            await MainActor.run {
+                self.isReachable = true
+                self.lastError = nil
+            }
+        } catch {
+            await MainActor.run {
+                self.isReachable = false
+                self.lastError = error.localizedDescription
+            }
+        }
+    }
+
+    struct SessionsResponse: Codable {
+        let sessions: [DashboardSession]?
+        let pagination: Pagination?
+
+        struct Pagination: Codable {
+            let total: Int?
+            let limit: Int?
+            let offset: Int?
+        }
+    }
+
+    struct CostData {
+        let totalCost: Double?
+        let byAgent: [AgentCost]?
+        let byModel: [ModelCost]?
+        let byDay: [DayCost]?
+        let sessionsCount: Int?
+        let tokensUsed: DashboardTokenUsage?
+
+        struct AgentCost: Identifiable {
+            let agentName: String
+            let cost: Double
+            var id: String { agentName }
+        }
+
+        struct ModelCost: Identifiable {
+            let model: String
+            let cost: Double
+            var id: String { model }
+        }
+
+        struct DayCost: Identifiable {
+            let date: String
+            let cost: Double
+            var id: String { date }
+        }
+
+        struct DashboardTokenUsage {
+            let input: Int?
+            let output: Int?
+            let cached: Int?
+        }
+    }
+
+    struct MemoryFile: Codable, Identifiable {
+        let path: String
+        let name: String?
+        let group: String?
+        let groupLabel: String?
+        let size: Int?
+        let mtime: Double?
+        var id: String { path }
+
+        var displayName: String { name ?? path.components(separatedBy: "/").last ?? path }
+    }
+
+    struct MemoryFileContent: Codable {
+        let content: String
+        let mtime: Double?
+        let path: String
+    }
+
+    struct MemoryFileUpdateResult: Codable {
+        let ok: Bool?
+        let path: String?
+        let mtime: Double?
+        let status: String?
+    }
+
+    struct TasksResponse: Codable {
+        let tasks: [DashboardTask]?
+        let agents: [DashboardAgent]?
+        let stats: TaskStats?
+    }
+
+    struct SummariesResponse: Codable {
+        let summaries: [[String: String]]?
+        let totalSessions: Int?
+        let summarizedCount: Int?
+        let pendingCount: Int?
+    }
+
+    struct GatewayConfig: Codable {
+        let url: String?
+        let token: String?
+    }
+
+    struct ChatSessionsResponse: Codable {
+        let sessions: [[String: String]]?
+    }
+
+    struct LiveFilesResponse: Codable {
+        let generatedAt: String?
+        let files: [LiveFile]?
+
+        struct LiveFile: Codable, Identifiable {
+            let path: String
+            let status: String?
+            let additions: Int?
+            let deletions: Int?
+            let preview: String?
+            var id: String { path }
+        }
     }
 
     private func log(_ message: String) {
@@ -88,25 +584,44 @@ class DashboardAPIClient: ObservableObject {
         log("\(method) \(url.absoluteString) failed: \(error.localizedDescription)")
     }
 
-    private func noteReachable() {
-        Task { @MainActor in
-            self.isReachable = true
-            self.lastError = nil
-        }
-    }
-
-    private func noteFailure(_ error: Error) {
-        Task { @MainActor in
-            self.isReachable = false
-            self.lastError = error.localizedDescription
-        }
+    private var normalizedGatewayToken: String? {
+        let trimmed = UserDefaults.standard.string(forKey: "gatewayToken")?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (trimmed?.isEmpty == false) ? trimmed : nil
     }
 
     private func requestURL(for path: String) throws -> URL {
-        guard let url = URL(string: "\(baseURL)\(path)") else {
+        guard var baseComponents = URLComponents(string: baseURL) else {
+            throw URLError(.badURL)
+        }
+
+        let incoming = URLComponents(string: path)
+        let incomingPath = incoming?.path ?? path
+        let normalizedIncomingPath = incomingPath.hasPrefix("/") ? incomingPath : "/\(incomingPath)"
+
+        let trimmedBasePath = baseComponents.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let trimmedIncomingPath = normalizedIncomingPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let combined = [trimmedBasePath, trimmedIncomingPath].filter { !$0.isEmpty }.joined(separator: "/")
+        baseComponents.path = "/\(combined)"
+        baseComponents.percentEncodedQuery = incoming?.percentEncodedQuery
+
+        guard let url = baseComponents.url else {
             throw URLError(.badURL)
         }
         return url
+    }
+
+    private func makeRequest(url: URL, method: String, body: Data? = nil) -> URLRequest {
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if body != nil {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        }
+        if let token = normalizedGatewayToken {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
+        request.httpBody = body
+        return request
     }
 
     private func execute(_ request: URLRequest) async throws -> Data {
@@ -114,225 +629,180 @@ class DashboardAPIClient: ObservableObject {
         do {
             let (data, response) = try await session.data(for: request)
             logResponse(response, data: data)
-            try validateResponse(response)
-            noteReachable()
+            try validateResponse(response, data: data)
+            await MainActor.run {
+                self.isReachable = true
+                self.lastError = nil
+            }
             return data
         } catch {
             logFailure(request.httpMethod ?? "GET", url: request.url!, error: error)
-            noteFailure(error)
+            await MainActor.run {
+                self.isReachable = false
+                self.lastError = error.localizedDescription
+            }
             throw error
         }
     }
 
-    private func executeGET(_ url: URL) async throws -> Data {
-        logRequest("GET", url: url)
-        do {
-            let (data, response) = try await session.data(from: url)
-            logResponse(response, data: data)
-            try validateResponse(response)
-            noteReachable()
-            return data
-        } catch {
-            logFailure("GET", url: url, error: error)
-            noteFailure(error)
-            throw error
+    private func get(_ path: String) async throws -> Data {
+        let url = try requestURL(for: path)
+        let request = makeRequest(url: url, method: "GET")
+        return try await execute(request)
+    }
+
+    private func post(_ path: String, body: [String: Any]) async throws -> Data {
+        let url = try requestURL(for: path)
+        let data = try JSONSerialization.data(withJSONObject: body)
+        let request = makeRequest(url: url, method: "POST", body: data)
+        return try await execute(request)
+    }
+
+    private func validateResponse(_ response: URLResponse, data: Data) throws {
+        guard let http = response as? HTTPURLResponse else { return }
+        guard !(400...599).contains(http.statusCode) else {
+            let body = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let message = (body?.isEmpty == false ? body! : HTTPURLResponse.localizedString(forStatusCode: http.statusCode))
+            throw NSError(domain: "DashboardAPIClient", code: http.statusCode, userInfo: [NSLocalizedDescriptionKey: message])
         }
     }
 
-    // MARK: - Agents
-
-    func fetchAgents() async throws -> [DashboardAgent] {
-        let data = try await get("/api/agents")
-        // Handle both { agents: [...] } and direct array
-        if let wrapper = try? JSONDecoder().decode(AgentsWrapper.self, from: data) {
-            return wrapper.agents
-        }
-        return (try? JSONDecoder().decode([DashboardAgent].self, from: data)) ?? []
+    private func getThreadList() async throws -> ThreadListResponse {
+        let data = try await get("/api/chat/threads")
+        return try JSONDecoder().decode(ThreadListResponse.self, from: data)
     }
 
-    private struct AgentsWrapper: Codable {
-        let agents: [DashboardAgent]
+    private func getThreadHistory(threadId: String, limit: Int = 200) async throws -> HistoryResponse {
+        let encodedThreadId = threadId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? threadId
+        let data = try await get("/api/chat/history?thread_id=\(encodedThreadId)&limit=\(limit)")
+        return try JSONDecoder().decode(HistoryResponse.self, from: data)
     }
 
-    // MARK: - Sessions
-
-    func fetchSessions(days: Int = 7, limit: Int = 50, offset: Int = 0) async throws -> SessionsResponse {
-        let data = try await get("/api/sessions?days=\(days)&limit=\(limit)&offset=\(offset)")
-        return try JSONDecoder().decode(SessionsResponse.self, from: data)
-    }
-
-    struct SessionsResponse: Codable {
-        let sessions: [DashboardSession]?
-        let pagination: Pagination?
-
-        struct Pagination: Codable {
-            let total: Int?
-            let limit: Int?
-            let offset: Int?
-        }
-    }
-
-    func fetchSessionMessages(sessionId: String, limit: Int = 200) async throws -> [SessionMessage] {
-        let data = try await get("/api/sessions/\(sessionId)/messages?limit=\(limit)")
-        // Handle both { messages: [...] } and direct array
-        if let wrapper = try? JSONDecoder().decode(MessagesWrapper.self, from: data) {
-            return wrapper.messages
-        }
-        return (try? JSONDecoder().decode([SessionMessage].self, from: data)) ?? []
-    }
-
-    private struct MessagesWrapper: Codable {
-        let messages: [SessionMessage]
-    }
-
-    // MARK: - Costs
-
-    func fetchCosts(period: String = "week") async throws -> CostData {
-        let data = try await get("/api/costs?period=\(period)")
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw URLError(.cannotParseResponse)
-        }
-
-        // Parse byAgent dict: { "name": cost }
-        let byAgent: [CostData.AgentCost]? = (json["byAgent"] as? [String: Any])?.compactMap { key, value in
-            guard let cost = value as? Double else { return nil }
-            return CostData.AgentCost(agentName: key, cost: cost)
-        }
-
-        // Parse byModel dict: { "name": cost }
-        let byModel: [CostData.ModelCost]? = (json["byModel"] as? [String: Any])?.compactMap { key, value in
-            guard let cost = value as? Double else { return nil }
-            return CostData.ModelCost(model: key, cost: cost)
-        }
-
-        // Parse byDay dict: { "date": cost }
-        let byDay: [CostData.DayCost]? = (json["byDay"] as? [String: Any])?.compactMap { key, value -> CostData.DayCost? in
-            guard let cost = value as? Double else { return nil }
-            return CostData.DayCost(date: key, cost: cost)
-        }.sorted(by: { $0.date < $1.date })
-
-        // Parse totalTokens
-        let tokensDict = json["totalTokens"] as? [String: Any]
-        let tokens: CostData.DashboardTokenUsage? = tokensDict.map {
-            CostData.DashboardTokenUsage(
-                input: $0["input"] as? Int,
-                output: $0["output"] as? Int,
-                cached: ($0["cacheRead"] as? Int) ?? ($0["cached"] as? Int)
-            )
-        }
-
-        return CostData(
-            totalCost: json["totalCost"] as? Double,
-            byAgent: byAgent,
-            byModel: byModel,
-            byDay: byDay,
-            sessionsCount: json["sessionCount"] as? Int,
-            tokensUsed: tokens
+    private func mapThreadInfoToDashboardSession(_ thread: ThreadInfo) -> DashboardSession {
+        DashboardSession(
+            id: thread.id,
+            agentId: thread.channel,
+            agentName: buildSessionLabel(for: thread),
+            agentEmoji: thread.threadType == "assistant" ? "🧠" : "💬",
+            agentColor: nil,
+            model: nil,
+            messageCount: thread.turnCount,
+            totalCost: nil,
+            tokensUsed: nil,
+            updatedAt: thread.updatedAt,
+            startedAt: thread.createdAt,
+            projectPath: nil,
+            source: thread.channel ?? "gateway",
+            status: thread.state,
+            folderTrail: nil
         )
     }
 
-    struct CostData {
-        let totalCost: Double?
-        let byAgent: [AgentCost]?
-        let byModel: [ModelCost]?
-        let byDay: [DayCost]?
-        let sessionsCount: Int?
-        let tokensUsed: DashboardTokenUsage?
+    private func mapTurnsToSessionMessages(_ history: HistoryResponse) -> [SessionMessage] {
+        history.turns.enumerated().flatMap { index, turn in
+            var items: [SessionMessage] = []
 
-        struct AgentCost: Identifiable {
-            let agentName: String
-            let cost: Double
-            var id: String { agentName }
-        }
+            let userInput = turn.userInput.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !userInput.isEmpty {
+                items.append(SessionMessage(
+                    id: "\(history.threadId)-user-\(index)",
+                    role: "user",
+                    content: userInput,
+                    timestamp: turn.startedAt,
+                    cost: nil,
+                    model: nil,
+                    toolCalls: nil,
+                    toolResults: nil
+                ))
+            }
 
-        struct ModelCost: Identifiable {
-            let model: String
-            let cost: Double
-            var id: String { model }
-        }
+            let response = (turn.response ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !response.isEmpty {
+                items.append(SessionMessage(
+                    id: "\(history.threadId)-assistant-\(index)",
+                    role: "assistant",
+                    content: response,
+                    timestamp: turn.completedAt ?? turn.startedAt,
+                    cost: nil,
+                    model: nil,
+                    toolCalls: nil,
+                    toolResults: nil
+                ))
+            }
 
-        struct DayCost: Identifiable {
-            let date: String
-            let cost: Double
-            var id: String { date }
-        }
-
-        struct DashboardTokenUsage {
-            let input: Int?
-            let output: Int?
-            let cached: Int?
+            return items
         }
     }
 
-    func fetchAllSessions(days: Int, batchSize: Int = 200) async throws -> [DashboardSession] {
-        var allSessions: [DashboardSession] = []
-        var offset = 0
-
-        while true {
-            let response = try await fetchSessions(days: days, limit: batchSize, offset: offset)
-            let page = response.sessions ?? []
-            allSessions.append(contentsOf: page)
-
-            if page.isEmpty || page.count < batchSize {
-                break
-            }
-
-            if let total = response.pagination?.total, allSessions.count >= total {
-                break
-            }
-
-            offset += page.count
+    private func buildSessionLabel(for thread: ThreadInfo) -> String {
+        if let title = thread.title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty {
+            return title
         }
-
-        return allSessions
+        return thread.threadType == "assistant" ? "Assistant" : "聊天会话"
     }
 
-    func fetchDisplayCosts(period: String = "week", preferences: CostDisplayPreferences) async throws -> CostData {
-        guard preferences.appliesSubscriptionCoverage else {
-            return try await fetchCosts(period: period)
-        }
+    private func mapRoutineToTask(_ routine: RoutineInfo) -> DashboardTask {
+        DashboardTask(
+            id: routine.id,
+            title: routine.name,
+            agent_id: nil,
+            agent_name: nil,
+            agent_emoji: nil,
+            status: routine.status ?? (routine.enabled == true ? "enabled" : "disabled"),
+            started_at: routine.lastRunAt,
+            completed_at: routine.nextRunAt
+        )
+    }
 
-        let sessions = try await fetchAllSessions(days: Self.sessionLookbackDays(for: period))
-        return Self.makeDisplayCostData(from: sessions, period: period, preferences: preferences)
+    private func mapGatewayStatusToOpenClawStatus(_ status: GatewayStatusSummary) -> OpenClawStatus {
+        OpenClawStatus(
+            cronJobs: nil,
+            heartbeats: nil,
+            summary: OpenClawSummary(
+                totalCronJobs: status.sessions ?? 0,
+                enabledCronJobs: status.agents ?? 0,
+                cronErrors: 0,
+                heartbeatCount: status.connectedDevices ?? 0,
+                staleHeartbeats: 0,
+                nextRunAtMs: nil,
+                lastRunAtMs: nil
+            ),
+            generatedAt: ISO8601DateFormatter().string(from: Date())
+        )
+    }
+
+    private func checkGatewayOnlyHealth() async throws {
+        for path in ["/api/health", "/v1/models"] {
+            do {
+                let _ = try await get(path)
+                return
+            } catch {
+                continue
+            }
+        }
+        throw URLError(.badServerResponse)
     }
 
     private static func sessionLookbackDays(for period: String) -> Int {
         switch period {
-        case "1h", "6h", "today":
-            return 1
-        case "week":
-            return 7
-        case "month":
-            return 30
-        case "all":
-            return 3650
-        default:
-            return 7
+        case "1h", "6h", "today": return 1
+        case "week": return 7
+        case "month": return 30
+        case "all": return 3650
+        default: return 7
         }
     }
 
     private static func periodStart(for period: String, now: Date = Date()) -> Date? {
         switch period {
-        case "1h":
-            return now.addingTimeInterval(-3600)
-        case "6h":
-            return now.addingTimeInterval(-(6 * 3600))
-        case "today":
-            return Calendar.current.startOfDay(for: now)
-        case "week":
-            return now.addingTimeInterval(-(7 * 24 * 3600))
-        case "month":
-            return now.addingTimeInterval(-(30 * 24 * 3600))
-        case "all":
-            return nil
-        default:
-            return nil
+        case "1h": return now.addingTimeInterval(-3600)
+        case "6h": return now.addingTimeInterval(-(6 * 3600))
+        case "today": return Calendar.current.startOfDay(for: now)
+        case "week": return now.addingTimeInterval(-(7 * 24 * 3600))
+        case "month": return now.addingTimeInterval(-(30 * 24 * 3600))
+        case "all": return nil
+        default: return nil
         }
-    }
-
-    private static func sessionDate(for session: DashboardSession) -> Date? {
-        parseISODate(session.updatedAt)
-            ?? parseISODate(session.startedAt)
     }
 
     private static func parseISODate(_ value: String?) -> Date? {
@@ -340,12 +810,18 @@ class DashboardAPIClient: ObservableObject {
 
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-
         if let date = formatter.date(from: value) {
             return date
         }
-
         return ISO8601DateFormatter().date(from: value)
+    }
+
+    private static func mtimeEpoch(from isoString: String?) -> Double? {
+        parseISODate(isoString)?.timeIntervalSince1970 * 1000
+    }
+
+    private static func sessionDate(for session: DashboardSession) -> Date? {
+        parseISODate(session.updatedAt) ?? parseISODate(session.startedAt)
     }
 
     private static func dayKey(for date: Date) -> String {
@@ -374,13 +850,7 @@ class DashboardAPIClient: ObservableObject {
         var cachedTokens = 0
 
         for session in filteredSessions {
-            let adjustedCost = displayedCost(
-                session.totalCost,
-                model: session.model,
-                source: session.source,
-                preferences: preferences
-            ) ?? 0
-
+            let adjustedCost = displayedCost(session.totalCost, model: session.model, source: session.source, preferences: preferences) ?? 0
             totalCost += adjustedCost
 
             if adjustedCost > 0 {
@@ -400,21 +870,11 @@ class DashboardAPIClient: ObservableObject {
             cachedTokens += session.tokensUsed?.cached ?? 0
         }
 
-        let agentCosts = byAgent
-            .map { CostData.AgentCost(agentName: $0.key, cost: $0.value) }
-            .sorted { $0.cost > $1.cost }
-        let modelCosts = byModel
-            .map { CostData.ModelCost(model: $0.key, cost: $0.value) }
-            .sorted { $0.cost > $1.cost }
-        let dayCosts = byDay
-            .map { CostData.DayCost(date: $0.key, cost: $0.value) }
-            .sorted { $0.date < $1.date }
-
         return CostData(
             totalCost: totalCost,
-            byAgent: agentCosts.isEmpty ? nil : agentCosts,
-            byModel: modelCosts.isEmpty ? nil : modelCosts,
-            byDay: dayCosts.isEmpty ? nil : dayCosts,
+            byAgent: byAgent.isEmpty ? nil : byAgent.map { CostData.AgentCost(agentName: $0.key, cost: $0.value) }.sorted { $0.cost > $1.cost },
+            byModel: byModel.isEmpty ? nil : byModel.map { CostData.ModelCost(model: $0.key, cost: $0.value) }.sorted { $0.cost > $1.cost },
+            byDay: byDay.isEmpty ? nil : byDay.map { CostData.DayCost(date: $0.key, cost: $0.value) }.sorted { $0.date < $1.date },
             sessionsCount: filteredSessions.count,
             tokensUsed: CostData.DashboardTokenUsage(
                 input: inputTokens > 0 ? inputTokens : nil,
@@ -424,199 +884,156 @@ class DashboardAPIClient: ObservableObject {
         )
     }
 
-    // MARK: - Memory
-
-    func fetchMemoryFiles() async throws -> [MemoryFile] {
-        let data = try await get("/api/memory/list")
-        let wrapper = try JSONDecoder().decode(MemoryFilesWrapper.self, from: data)
-        return wrapper.files
-    }
-
-    struct MemoryFilesWrapper: Codable {
-        let files: [MemoryFile]
-    }
-
-    struct MemoryFile: Codable, Identifiable {
-        let path: String
-        let name: String?
-        let group: String?
-        let groupLabel: String?
-        let size: Int?
-        let mtime: Double?  // epoch ms
-        var id: String { path }
-
-        var displayName: String { name ?? path.components(separatedBy: "/").last ?? path }
-    }
-
-    func readMemoryFile(path: String) async throws -> MemoryFileContent {
-        let encoded = path.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? path
-        let data = try await get("/api/memory/file?path=\(encoded)")
-        return try JSONDecoder().decode(MemoryFileContent.self, from: data)
-    }
-
-    struct MemoryFileContent: Codable {
-        let content: String
-        let mtime: Double?  // epoch ms
-        let path: String
-    }
-
-    func updateMemoryFile(path: String, content: String, expectedMtime: Double? = nil) async throws -> MemoryFileUpdateResult {
-        var body: [String: Any] = ["path": path, "content": content]
-        if let mtime = expectedMtime { body["expectedMtime"] = mtime }
-        let data = try await put("/api/memory/file", body: body)
-        return try JSONDecoder().decode(MemoryFileUpdateResult.self, from: data)
-    }
-
-    struct MemoryFileUpdateResult: Codable {
-        let ok: Bool?
-        let path: String?
-        let mtime: Double?  // epoch ms
-    }
-
-    // MARK: - Tasks
-
-    func fetchTasks() async throws -> TasksResponse {
-        let data = try await get("/api/tasks")
-        return try JSONDecoder().decode(TasksResponse.self, from: data)
-    }
-
-    struct TasksResponse: Codable {
-        let tasks: [DashboardTask]?
-        let agents: [DashboardAgent]?
-        let stats: TaskStats?
-    }
-
-    func updateTaskStatus(id: String, status: String) async throws {
-        let _ = try await patch("/api/tasks", body: ["id": id, "status": status])
-    }
-
-    // MARK: - Summaries
-
-    func fetchSummaries(days: Int = 30) async throws -> SummariesResponse {
-        let data = try await get("/api/summary?days=\(days)")
-        return try JSONDecoder().decode(SummariesResponse.self, from: data)
-    }
-
-    struct SummariesResponse: Codable {
-        let summaries: [[String: String]]?
-        let totalSessions: Int?
-        let summarizedCount: Int?
-        let pendingCount: Int?
-    }
-
-    // MARK: - OpenClaw Status
-
-    func fetchOpenClawStatus() async throws -> OpenClawStatus {
-        let data = try await get("/api/openclaw/status/stream?format=json")
-        return try JSONDecoder().decode(OpenClawStatus.self, from: data)
-    }
-
-    // MARK: - Gateway Config (auto-discover)
-
-    func fetchGatewayConfig() async throws -> GatewayConfig {
-        let data = try await get("/api/gateway-config")
-        return try JSONDecoder().decode(GatewayConfig.self, from: data)
-    }
-
-    struct GatewayConfig: Codable {
-        let url: String?
-        let token: String?
-    }
-
-    // MARK: - Chat
-
-    func fetchChatSessions(days: Int = 7, limit: Int = 50) async throws -> ChatSessionsResponse {
-        let data = try await get("/api/chat/sessions?days=\(days)&limit=\(limit)")
-        return try JSONDecoder().decode(ChatSessionsResponse.self, from: data)
-    }
-
-    struct ChatSessionsResponse: Codable {
-        let sessions: [[String: Any]]?
+    private struct ThreadListResponse: Codable {
+        let assistantThread: ThreadInfo?
+        let threads: [ThreadInfo]
+        let activeThread: String?
 
         enum CodingKeys: String, CodingKey {
-            case sessions
-        }
-
-        init(from decoder: Decoder) throws {
-            sessions = nil // Will use raw JSON for flexibility
-        }
-
-        func encode(to encoder: Encoder) throws {}
-    }
-
-    func fetchChatHistory(sessionId: String, limit: Int = 100) async throws -> [SessionMessage] {
-        let data = try await get("/api/chat/history?sessionId=\(sessionId)&limit=\(limit)")
-        let wrapper = try? JSONDecoder().decode(MessagesWrapper.self, from: data)
-        return wrapper?.messages ?? []
-    }
-
-    // MARK: - Live Files
-
-    func fetchLiveFiles() async throws -> LiveFilesResponse {
-        let data = try await get("/api/live/files")
-        return try JSONDecoder().decode(LiveFilesResponse.self, from: data)
-    }
-
-    struct LiveFilesResponse: Codable {
-        let generatedAt: String?
-        let files: [LiveFile]?
-
-        struct LiveFile: Codable, Identifiable {
-            let path: String
-            let status: String?
-            let additions: Int?
-            let deletions: Int?
-            let preview: String?
-            var id: String { path }
+            case assistantThread = "assistant_thread"
+            case threads
+            case activeThread = "active_thread"
         }
     }
 
-    // MARK: - Health Check
+    private struct ThreadInfo: Codable {
+        let id: String
+        let state: String
+        let turnCount: Int
+        let createdAt: String
+        let updatedAt: String
+        let title: String?
+        let threadType: String?
+        let channel: String?
 
-    func checkHealth() async {
-        do {
-            let _ = try await get("/api/agents")
-            await MainActor.run {
-                self.isReachable = true
-                self.lastError = nil
+        enum CodingKeys: String, CodingKey {
+            case id, state, title, channel
+            case turnCount = "turn_count"
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+            case threadType = "thread_type"
+        }
+    }
+
+    private struct HistoryResponse: Codable {
+        let threadId: String
+        let turns: [ThreadTurn]
+
+        enum CodingKeys: String, CodingKey {
+            case threadId = "thread_id"
+            case turns
+        }
+    }
+
+    private struct ThreadTurn: Codable {
+        let userInput: String
+        let response: String?
+        let state: String
+        let startedAt: String
+        let completedAt: String?
+
+        enum CodingKeys: String, CodingKey {
+            case state, response
+            case userInput = "user_input"
+            case startedAt = "started_at"
+            case completedAt = "completed_at"
+        }
+    }
+
+    private struct MemoryListResponse: Codable {
+        let path: String
+        let entries: [MemoryListEntry]
+    }
+
+    private struct MemoryListEntry: Codable {
+        let name: String
+        let path: String
+        let isDir: Bool
+        let updatedAt: String?
+
+        enum CodingKeys: String, CodingKey {
+            case name, path
+            case isDir = "is_dir"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct MemoryReadResponse: Codable {
+        let path: String
+        let content: String
+        let updatedAt: String?
+
+        enum CodingKeys: String, CodingKey {
+            case path, content
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct RoutinesResponse: Codable {
+        let routines: [RoutineInfo]
+    }
+
+    private struct RoutineInfo: Codable {
+        let id: String
+        let name: String
+        let enabled: Bool?
+        let status: String?
+        let schedule: String?
+        let lastRunAt: String?
+        let nextRunAt: String?
+
+        enum CodingKeys: String, CodingKey {
+            case id, name, enabled, status, schedule
+            case lastRunAt = "last_run_at"
+            case nextRunAt = "next_run_at"
+        }
+    }
+
+    private struct GatewayStatusSummary: Codable {
+        let uptime: Double?
+        let version: String?
+        let agents: Int?
+        let sessions: Int?
+        let connectedDevices: Int?
+
+        enum CodingKeys: String, CodingKey {
+            case uptime, version, agents, sessions
+            case connectedDevices = "connected_devices"
+        }
+    }
+}
+
+private func displayedCost(
+    _ rawCost: Double?,
+    model: String?,
+    source: String?,
+    preferences: CostDisplayPreferences
+) -> Double? {
+    guard let rawCost else { return nil }
+    guard preferences.mode == .effectiveBilled else { return rawCost }
+    guard !preferences.shouldZeroOut(model: model, source: source) else { return 0 }
+    return rawCost
+}
+
+private extension CostDisplayPreferences {
+    func shouldZeroOut(model: String?, source: String?) -> Bool {
+        let normalizedModel = model?.lowercased() ?? ""
+        let normalizedSource = source?.lowercased() ?? ""
+
+        if openAISubscription {
+            let openAIIndicators = ["gpt", "o1", "o3", "o4", "openai"]
+            if openAIIndicators.contains(where: { normalizedModel.contains($0) || normalizedSource.contains($0) }) {
+                return true
             }
-        } catch {
-            await MainActor.run {
-                self.isReachable = false
-                self.lastError = error.localizedDescription
+        }
+
+        if anthropicSubscription {
+            let anthropicIndicators = ["claude", "anthropic"]
+            if anthropicIndicators.contains(where: { normalizedModel.contains($0) || normalizedSource.contains($0) }) {
+                return true
             }
         }
-    }
 
-    // MARK: - HTTP Helpers
-
-    private func get(_ path: String) async throws -> Data {
-        let url = try requestURL(for: path)
-        return try await executeGET(url)
-    }
-
-    private func put(_ path: String, body: [String: Any]) async throws -> Data {
-        let url = try requestURL(for: path)
-        var request = URLRequest(url: url)
-        request.httpMethod = "PUT"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        return try await execute(request)
-    }
-
-    private func patch(_ path: String, body: [String: Any]) async throws -> Data {
-        let url = try requestURL(for: path)
-        var request = URLRequest(url: url)
-        request.httpMethod = "PATCH"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        return try await execute(request)
-    }
-
-    private func validateResponse(_ response: URLResponse) throws {
-        guard let http = response as? HTTPURLResponse else { return }
-        if http.statusCode >= 400 {
-            throw URLError(URLError.Code(rawValue: http.statusCode))
-        }
+        return false
     }
 }

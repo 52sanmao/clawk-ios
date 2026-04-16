@@ -21,6 +21,11 @@ enum Config {
         return gatewayFallbackURL
     }
 
+    static var isRelayEnabled: Bool {
+        let storedRelay = UserDefaults.standard.string(forKey: "relayBaseURL")?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return storedRelay?.isEmpty == false
+    }
+
     static var baseURL: String { relayBaseURL }
 
     static func persistRelayBaseURL(_ url: String) {

@@ -777,8 +777,12 @@ class MessageStore: NSObject, ObservableObject {
         noteRelayBaseURL()
         noteWSURL()
         noteCurrentDeviceToken()
-        connect()
-        pairDevice()
+        if Config.isRelayEnabled {
+            connect()
+            pairDevice()
+        } else {
+            log("Relay is disabled; skipping legacy websocket and pair setup")
+        }
     }
 
     func reloadConfiguration() {
@@ -792,11 +796,20 @@ class MessageStore: NSObject, ObservableObject {
         log("Reloading relay configuration from current app settings")
         noteRelayBaseURL()
         noteWSURL()
-        connect()
-        pairDevice()
+        if Config.isRelayEnabled {
+            connect()
+            pairDevice()
+        } else {
+            log("Relay is disabled; skipping legacy websocket and pair setup")
+        }
     }
     
     func pairDevice() {
+        guard Config.isRelayEnabled else {
+            log("Skipped relay pairing because relay is disabled")
+            return
+        }
+
         let url = Config.apiURL.appendingPathComponent("/pair")
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -839,6 +852,16 @@ class MessageStore: NSObject, ObservableObject {
     }
     
     func connect() {
+        guard Config.isRelayEnabled else {
+            log("Skipped relay websocket connect because relay is disabled")
+            DispatchQueue.main.async {
+                self.isConnecting = false
+                self.isConnected = false
+                self.dashboardConnected = false
+            }
+            return
+        }
+
         DispatchQueue.main.async {
             self.isConnecting = true
         }
@@ -863,6 +886,11 @@ class MessageStore: NSObject, ObservableObject {
     }
     
     private func reconnect() {
+        guard Config.isRelayEnabled else {
+            log("Relay disabled; not scheduling reconnect")
+            return
+        }
+
         noteReconnect()
         DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
             self?.connect()
@@ -871,6 +899,11 @@ class MessageStore: NSObject, ObservableObject {
     }
     
     private func startPolling() {
+        guard Config.isRelayEnabled else {
+            log("Skipped relay polling because relay is disabled")
+            return
+        }
+
         pollTimer?.invalidate()
         notePollTimerInvalidated()
         notePollingStarted()
@@ -889,6 +922,11 @@ class MessageStore: NSObject, ObservableObject {
     }
     
     private func pollMessages() {
+        guard Config.isRelayEnabled else {
+            log("Skipped relay poll because relay is disabled")
+            return
+        }
+
         let url = Config.apiURL.appendingPathComponent("/poll")
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
@@ -1074,7 +1112,11 @@ class MessageStore: NSObject, ObservableObject {
     func manualRefresh() {
         noteManualRefresh()
         noteRefreshState(isConnected)
-        pollMessages()
+        if Config.isRelayEnabled {
+            pollMessages()
+        } else {
+            log("Relay disabled; manual refresh only affects HTTP-backed views")
+        }
     }
     
     func clearLogs() {
