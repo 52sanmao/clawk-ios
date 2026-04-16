@@ -1169,13 +1169,13 @@ class MessageStore: NSObject, ObservableObject {
 // MARK: - WebSocket Delegate
 
 extension MessageStore: URLSessionWebSocketDelegate {
-    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocol: String?) {
+    func urlSession(_ session: URLSession, webSocketTask: URLSessionWebSocketTask, didOpenWithProtocol protocolName: String?) {
         DispatchQueue.main.async {
             self.isConnected = true
             self.isConnecting = false
         }
         noteSocketConnected()
-        noteSocketOpenProtocol(protocol)
+        noteSocketOpenProtocol(protocolName)
         noteDashboardConnected(true)
         stopPolling()
         receive()
