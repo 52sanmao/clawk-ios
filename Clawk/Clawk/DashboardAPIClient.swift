@@ -607,7 +607,8 @@ final class DashboardAPIClient: ObservableObject {
     }
 
     private static func mtimeEpoch(from isoString: String?) -> Double? {
-        parseISODate(isoString)?.timeIntervalSince1970 * 1000
+        guard let date = parseISODate(isoString) else { return nil }
+        return date.timeIntervalSince1970 * 1000
     }
 
     private static func sessionDate(for session: DashboardSession) -> Date? {
@@ -815,37 +816,3 @@ private extension SessionMessage {
     }
 }
 
-private func displayedCost(
-    _ rawCost: Double?,
-    model: String?,
-    source: String?,
-    preferences: CostDisplayPreferences
-) -> Double? {
-    guard let rawCost else { return nil }
-    guard preferences.mode == .effectiveBilled else { return rawCost }
-    guard !preferences.shouldZeroOut(model: model, source: source) else { return 0 }
-    return rawCost
-}
-
-private extension CostDisplayPreferences {
-    func shouldZeroOut(model: String?, source: String?) -> Bool {
-        let normalizedModel = model?.lowercased() ?? ""
-        let normalizedSource = source?.lowercased() ?? ""
-
-        if openAISubscription {
-            let openAIIndicators = ["gpt", "o1", "o3", "o4", "openai"]
-            if openAIIndicators.contains(where: { normalizedModel.contains($0) || normalizedSource.contains($0) }) {
-                return true
-            }
-        }
-
-        if anthropicSubscription {
-            let anthropicIndicators = ["claude", "anthropic"]
-            if anthropicIndicators.contains(where: { normalizedModel.contains($0) || normalizedSource.contains($0) }) {
-                return true
-            }
-        }
-
-        return false
-    }
-}
