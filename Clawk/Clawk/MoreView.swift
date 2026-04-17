@@ -303,6 +303,7 @@ struct SettingsFormContent: View {
     @ObservedObject var gateway: GatewayConnection
     @ObservedObject var dashboardAPI: DashboardAPIClient
     @ObservedObject var messageStore: MessageStore
+    @Environment(\.dismiss) private var dismiss
     @AppStorage(CostDisplayPreferences.modeKey) private var costDisplayModeRaw = CostDisplayMode.apiEquivalent.rawValue
     @AppStorage(CostDisplayPreferences.openAISubscriptionKey) private var openAISubscription = false
     @AppStorage(CostDisplayPreferences.anthropicSubscriptionKey) private var anthropicSubscription = false
@@ -578,6 +579,7 @@ struct SettingsFormContent: View {
         applyRelaySettings()
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.success)
+        dismiss()
     }
 
     private func autoDiscover() {

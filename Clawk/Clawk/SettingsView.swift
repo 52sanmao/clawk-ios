@@ -264,6 +264,7 @@ struct SettingsView: View {
         applyRelaySettings()
         let generator = UINotificationFeedbackGenerator()
         generator.notificationOccurred(.success)
+        dismiss()
     }
 
     private func autoDiscover() {
