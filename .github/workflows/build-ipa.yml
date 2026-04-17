@@ -60,6 +60,6 @@ jobs:
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: 爪聊-IPA
+          name: 爪聊
           path: ${{ runner.temp }}/爪聊.ipa
           retention-days: 30
